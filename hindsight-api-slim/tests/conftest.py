@@ -1,15 +1,16 @@
 """
 Pytest configuration and shared fixtures.
 """
-import pytest
-import pytest_asyncio
 import asyncio
 import os
-import filelock
 from pathlib import Path
-from dotenv import load_dotenv
-from hindsight_api import MemoryEngine, LLMConfig, LocalSTEmbeddings, RequestContext
 
+import filelock
+import pytest
+import pytest_asyncio
+from dotenv import load_dotenv
+
+from hindsight_api import LLMConfig, LocalSTEmbeddings, MemoryEngine, RequestContext
 from hindsight_api.engine.cross_encoder import LocalSTCrossEncoder
 from hindsight_api.engine.query_analyzer import DateparserQueryAnalyzer
 from hindsight_api.engine.task_backend import SyncTaskBackend
@@ -112,6 +113,71 @@ def pg0_db_url(db_url, tmp_path_factory, worker_id):
     run_migrations(url)
 
     return url
+
+
+@pytest.fixture(scope="session")
+def oracle_db_url():
+    """
+    Provide an Oracle 23ai connection URL for tests.
+
+    Reads from ORACLE_TEST_DSN env var. Skips the entire test if not set.
+    """
+    dsn = os.getenv("ORACLE_TEST_DSN")
+    if not dsn:
+        pytest.skip("ORACLE_TEST_DSN not set — skipping Oracle tests")
+    return dsn
+
+
+@pytest_asyncio.fixture(scope="function")
+async def oracle_memory(oracle_db_url, embeddings, cross_encoder, query_analyzer):
+    """
+    Provide a MemoryEngine backed by Oracle 23ai for each test.
+
+    Mirrors the PG `memory` fixture but uses the Oracle backend.
+    Runs Oracle migrations before yielding the engine.
+    """
+    from hindsight_api.config import clear_config_cache
+    from hindsight_api.migrations_oracle import run_oracle_migrations
+
+    # Run idempotent migrations
+    run_oracle_migrations(oracle_db_url)
+
+    # Temporarily set the database backend env var so the global config
+    # (used by fq_table / _is_oracle) returns "oracle".
+    old_backend = os.environ.get("HINDSIGHT_API_DATABASE_BACKEND")
+    os.environ["HINDSIGHT_API_DATABASE_BACKEND"] = "oracle"
+    clear_config_cache()
+
+    try:
+        mem = MemoryEngine(
+            db_url=oracle_db_url,
+            # Note: config.py loads ../.env with override=True, so these defaults
+            # only apply if no .env file is found. The .env file is authoritative.
+            memory_llm_provider=os.getenv("HINDSIGHT_API_LLM_PROVIDER", "openai"),
+            memory_llm_api_key=os.getenv("HINDSIGHT_API_LLM_API_KEY"),
+            memory_llm_model=os.getenv("HINDSIGHT_API_LLM_MODEL", "gpt-4o-mini"),
+            memory_llm_base_url=os.getenv("HINDSIGHT_API_LLM_BASE_URL") or None,
+            embeddings=embeddings,
+            cross_encoder=cross_encoder,
+            query_analyzer=query_analyzer,
+            pool_min_size=1,
+            pool_max_size=5,
+            run_migrations=False,  # Already ran above
+            task_backend=SyncTaskBackend(),
+        )
+        await mem.initialize()
+        yield mem
+        try:
+            await mem.close()
+        except Exception:
+            pass
+    finally:
+        # Restore original env var and clear config cache
+        if old_backend is None:
+            os.environ.pop("HINDSIGHT_API_DATABASE_BACKEND", None)
+        else:
+            os.environ["HINDSIGHT_API_DATABASE_BACKEND"] = old_backend
+        clear_config_cache()
 
 
 @pytest.fixture(scope="function")

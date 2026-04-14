@@ -46,7 +46,7 @@ _PG_PARAM_RE = re.compile(r"\$(\d+)")
 _PG_CAST_RE = re.compile(
     r"::(?:jsonb|json|text\[\]|text|uuid\[\]|uuid|varchar\[\]|varchar|"
     r"timestamptz\[\]|timestamptz|interval|vector\[\]|vector|"
-    r"integer\[\]|integer|bigint|float|numeric)"
+    r"integer\[\]|integer|bigint|float|numeric|boolean)"
 )
 
 # Match ON CONFLICT [(...)] DO NOTHING — column list is optional
@@ -62,7 +62,7 @@ _RETURNING_RE = re.compile(r"\bRETURNING\s+(.+)", re.IGNORECASE | re.DOTALL)
 _ANY_RE = re.compile(r"=\s*ANY\s*\(\s*:(\d+)\s*\)", re.IGNORECASE)
 _NOT_ALL_RE = re.compile(r"!=\s*ALL\s*\(\s*:(\d+)\s*\)", re.IGNORECASE)
 
-_JSON_ARROW_TEXT_RE = re.compile(r"(\w+)\s*->>\s*'(\w+)'")
+_JSON_ARROW_TEXT_RE = re.compile(r'("?\w+"?)\s*->>\s*\'(\w+)\'')  # handles both col and "col"
 _JSON_HAS_KEY_RE = re.compile(r"(\w+)\s*\?\s*'(\w+)'")
 _JSONB_CONTAINS_RE = re.compile(r"(\w+)\s*@>\s*:(\d+)")
 
@@ -253,6 +253,24 @@ def _rewrite_pg_to_oracle(query: str) -> tuple[str, bool, list[str] | None]:
     # Must happen BEFORE cast strip so we can detect ::jsonb
     query = re.sub(r"(\w+)\s*\|\|\s*(:\w+)::jsonb", r"JSON_MERGEPATCH(\1, \2)", query, flags=re.IGNORECASE)
 
+    # JSONB text extract + boolean cast + comparison (must run BEFORE cast strip)
+    # (trigger->>'refresh_after_consolidation')::boolean = true → JSON_VALUE("trigger", '$.key') = 'true'
+    def _rewrite_json_bool(m: re.Match) -> str:
+        col = m.group(1)
+        key = m.group(2)
+        val = m.group(3).lower()
+        # Quote Oracle reserved words
+        if col.lower() in ("trigger", "comment", "order", "group", "index"):
+            col = f'"{col}"'
+        return f"JSON_VALUE({col}, '$.{key}') = '{val}'"
+
+    query = re.sub(
+        r"""\((\w+)\s*->>\s*'(\w+)'\)::boolean\s*=\s*(true|false)""",
+        _rewrite_json_bool,
+        query,
+        flags=re.IGNORECASE,
+    )
+
     # Strip ::type casts
     query = _PG_CAST_RE.sub("", query)
 
@@ -289,8 +307,9 @@ def _rewrite_pg_to_oracle(query: str) -> tuple[str, bool, list[str] | None]:
     query = _JSONB_CONTAINS_RE.sub(r"JSON_EXISTS(\1, '$' PASSING :\2 AS cond)", query)
 
     # pgvector distance operator: col <=> :N → VECTOR_DISTANCE(col, :N, COSINE)
+    # Use [\w.]+ to capture table-qualified columns like mu.embedding
     query = re.sub(
-        r"(\w+)\s*<=>\s*(:\w+)",
+        r"([\w.]+)\s*<=>\s*(:\w+)",
         r"VECTOR_DISTANCE(\1, \2, COSINE)",
         query,
     )
@@ -389,6 +408,18 @@ def _rewrite_pg_to_oracle(query: str) -> tuple[str, bool, list[str] | None]:
     # != ALL(:N) → NOT IN (expanded list) — the negative counterpart of = ANY
     query = _NOT_ALL_RE.sub(r"NOT IN (/*EXPAND:\1*/)", query)
 
+    # CTE AS MATERIALIZED (...) → AS (...) — Oracle doesn't support MATERIALIZED CTE hint
+    query = re.sub(r"\bAS\s+MATERIALIZED\s*\(", "AS (", query, flags=re.IGNORECASE)
+
+    # COALESCE(:N, <numeric_literal>) — Oracle defaults None bind vars to VARCHAR2,
+    # causing type mismatch.  Wrap the bind var in TO_NUMBER so types align.
+    query = re.sub(
+        r"COALESCE\(\s*(:\w+)\s*,\s*(\d+(?:\.\d+)?)\s*\)",
+        r"COALESCE(TO_NUMBER(\1), \2)",
+        query,
+        flags=re.IGNORECASE,
+    )
+
     # CROSS JOIN LATERAL → CROSS APPLY (Oracle 12c+)
     query = re.sub(r"\bCROSS\s+JOIN\s+LATERAL\b", "CROSS APPLY", query, flags=re.IGNORECASE)
 
@@ -486,6 +517,18 @@ class OracleConnection(DatabaseConnection):
 
         if returning_cols is not None:
             oracledb = _import_oracledb()
+            # Column names that are known to be numeric
+            _NUMERIC_COLS = {
+                "max_tokens",
+                "priority",
+                "proof_count",
+                "access_count",
+                "importance_score",
+                "decay_factor",
+                "chunk_index",
+                "progress",
+                "active",
+            }
             for i, col in enumerate(returning_cols):
                 clean = col.strip().lower()
                 if " as " in clean:
@@ -493,6 +536,8 @@ class OracleConnection(DatabaseConnection):
                 # Use appropriate type for timestamp columns
                 if clean.endswith("_at") or clean in ("started_at", "ended_at", "last_updated", "last_refreshed_at"):
                     params[f"ret_{i}"] = cursor.var(oracledb.DB_TYPE_TIMESTAMP_TZ, arraysize=1)
+                elif clean in _NUMERIC_COLS:
+                    params[f"ret_{i}"] = cursor.var(oracledb.DB_TYPE_NUMBER, arraysize=1)
                 else:
                     params[f"ret_{i}"] = cursor.var(oracledb.DB_TYPE_VARCHAR, arraysize=1)
 

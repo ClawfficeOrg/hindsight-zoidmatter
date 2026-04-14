@@ -508,6 +508,8 @@ class LinkExpansionRetriever(GraphRetriever):
 
         Semantic and causal expansions run as a second combined CTE query.
         """
+        _is_pg = getattr(conn, "backend_type", "postgresql") == "postgresql"
+
         source_ids_found: list = []
         if logger.isEnabledFor(logging.DEBUG):
             debug_rows = await conn.fetch(
@@ -528,8 +530,133 @@ class LinkExpansionRetriever(GraphRetriever):
 
         config = get_config()
         ue = fq_table("unit_entities")
+        ml = fq_table("memory_links")
+        mu = fq_table("memory_units")
         per_entity_limit = config.link_expansion_per_entity_limit
 
+        if not _is_pg:
+            # Oracle: source_memory_ids is stored as JSON CLOB, not a native array.
+            # Use JSON_TABLE to explode the array, and subqueries for overlap checks.
+            entity_rows = await conn.fetch(
+                f"""
+                WITH seed_sources AS (
+                    SELECT DISTINCT jt.source_id
+                    FROM {fq_table("memory_units")} mu_seed,
+                         JSON_TABLE(mu_seed.source_memory_ids, '$[*]'
+                                    COLUMNS (source_id VARCHAR2(36) PATH '$')) jt
+                    WHERE mu_seed.id = ANY($1::uuid[])
+                      AND mu_seed.source_memory_ids IS NOT NULL
+                ),
+                source_entities AS (
+                    SELECT DISTINCT ue_seed.entity_id
+                    FROM seed_sources ss
+                    JOIN {ue} ue_seed ON ue_seed.unit_id = ss.source_id
+                ),
+                connected_sources AS (
+                    SELECT DISTINCT t.unit_id AS source_id
+                    FROM source_entities se
+                    CROSS JOIN LATERAL (
+                        SELECT ue_target.unit_id
+                        FROM {ue} ue_target
+                        WHERE ue_target.entity_id = se.entity_id
+                        ORDER BY ue_target.unit_id DESC
+                        FETCH FIRST {per_entity_limit} ROWS ONLY
+                    ) t
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM seed_sources ss WHERE ss.source_id = t.unit_id
+                    )
+                )
+                SELECT
+                    mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start,
+                    mu.occurred_end, mu.mentioned_at,
+                    mu.fact_type, mu.document_id, mu.chunk_id, mu.tags, mu.proof_count,
+                    (SELECT COUNT(DISTINCT jt2.source_id)
+                     FROM JSON_TABLE(mu.source_memory_ids, '$[*]'
+                                     COLUMNS (source_id VARCHAR2(36) PATH '$')) jt2
+                     WHERE jt2.source_id IN (SELECT source_id FROM connected_sources)
+                    ) AS score
+                FROM {fq_table("memory_units")} mu
+                WHERE mu.fact_type = 'observation'
+                  AND mu.id != ALL($1::uuid[])
+                  AND EXISTS (
+                      SELECT 1
+                      FROM JSON_TABLE(mu.source_memory_ids, '$[*]'
+                                      COLUMNS (source_id VARCHAR2(36) PATH '$')) jt3
+                      WHERE jt3.source_id IN (SELECT source_id FROM connected_sources)
+                  )
+                ORDER BY score DESC
+                FETCH FIRST $2 ROWS ONLY
+                """,
+                seed_ids,
+                budget,
+            )
+            logger.debug(f"[LinkExpansion] observation graph (Oracle): found {len(entity_rows)} connected observations")
+
+            # Semantic + causal for observations (Oracle path)
+            # Avoids GROUP BY CLOB and DISTINCT ON — mirrors _expand_world_facts Oracle strategy.
+            sem_causal_rows = await conn.fetch(
+                f"""
+                WITH sem_scores AS (
+                    SELECT id, MAX(weight) AS score
+                    FROM (
+                        SELECT mu.id, ml.weight
+                        FROM {ml} ml JOIN {mu} mu ON mu.id = ml.to_unit_id
+                        WHERE ml.from_unit_id = ANY($1::uuid[])
+                          AND ml.link_type = 'semantic' AND mu.fact_type = 'observation'
+                          AND mu.id != ALL($1::uuid[])
+                        UNION ALL
+                        SELECT mu.id, ml.weight
+                        FROM {ml} ml JOIN {mu} mu ON mu.id = ml.from_unit_id
+                        WHERE ml.to_unit_id = ANY($1::uuid[])
+                          AND ml.link_type = 'semantic' AND mu.fact_type = 'observation'
+                          AND mu.id != ALL($1::uuid[])
+                    ) sem_raw
+                    GROUP BY id
+                ),
+                semantic_expanded AS (
+                    SELECT mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start,
+                           mu.occurred_end, mu.mentioned_at,
+                           mu.fact_type, mu.document_id, mu.chunk_id, mu.tags, mu.proof_count,
+                           ss.score, 'semantic' AS source
+                    FROM sem_scores ss
+                    JOIN {mu} mu ON mu.id = ss.id
+                    ORDER BY ss.score DESC
+                    FETCH FIRST $2 ROWS ONLY
+                ),
+                causal_ranked AS (
+                    SELECT
+                        mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start,
+                        mu.occurred_end, mu.mentioned_at, mu.fact_type, mu.document_id,
+                        mu.chunk_id, mu.tags, mu.proof_count, ml.weight AS score,
+                        'causal' AS source,
+                        ROW_NUMBER() OVER (PARTITION BY mu.id ORDER BY ml.weight DESC) AS rn_
+                    FROM {ml} ml
+                    JOIN {mu} mu ON ml.to_unit_id = mu.id
+                    WHERE ml.from_unit_id = ANY($1::uuid[])
+                      AND ml.link_type IN ('causes', 'caused_by', 'enables', 'prevents')
+                      AND ml.weight >= $3 AND mu.fact_type = 'observation'
+                ),
+                causal_expanded AS (
+                    SELECT id, text, context, event_date, occurred_start, occurred_end, mentioned_at,
+                           fact_type, document_id, chunk_id, tags, proof_count, score, source
+                    FROM causal_ranked WHERE rn_ = 1
+                    ORDER BY score DESC
+                    FETCH FIRST $2 ROWS ONLY
+                )
+                SELECT * FROM semantic_expanded
+                UNION ALL
+                SELECT * FROM causal_expanded
+                """,
+                seed_ids,
+                budget,
+                self.causal_weight_threshold,
+            )
+
+            semantic_rows = [r for r in sem_causal_rows if r["source"] == "semantic"]
+            causal_rows = [r for r in sem_causal_rows if r["source"] == "causal"]
+            return entity_rows, semantic_rows, causal_rows
+
+        # PostgreSQL path: uses native array operators (unnest, &&, array_agg)
         connected_sources_cte = f"""
             source_entities AS (
                 SELECT DISTINCT ue_seed.entity_id
@@ -584,8 +711,6 @@ class LinkExpansionRetriever(GraphRetriever):
         logger.debug(f"[LinkExpansion] observation graph: found {len(entity_rows)} connected observations")
 
         # Semantic + causal for observations in one query
-        ml = fq_table("memory_links")
-        mu = fq_table("memory_units")
         sem_causal_rows = await conn.fetch(
             f"""
             WITH semantic_expanded AS (

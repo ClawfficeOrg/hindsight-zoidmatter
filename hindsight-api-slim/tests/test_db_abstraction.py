@@ -297,6 +297,27 @@ class TestOracleQueryRewriter:
         assert not ignore_dup
         assert returning_cols is None
 
+    def test_jsonb_boolean_rewrite(self):
+        """Verify JSONB ->> boolean comparison is rewritten to JSON_VALUE."""
+        from hindsight_api.engine.db.oracle import _rewrite_pg_to_oracle
+
+        query, _, _ = _rewrite_pg_to_oracle(
+            "WHERE (trigger->>'refresh_after_consolidation')::boolean = true"
+        )
+        assert "JSON_VALUE" in query
+        assert "'true'" in query
+        assert "->>" not in query
+
+    def test_jsonb_arrow_text_quoted(self):
+        """Verify ->> works with quoted column names."""
+        from hindsight_api.engine.db.oracle import _rewrite_pg_to_oracle
+
+        query, _, _ = _rewrite_pg_to_oracle(
+            "ORDER BY (result_metadata->>'sub_batch_index')::int"
+        )
+        assert "JSON_VALUE" in query
+        assert "->>" not in query
+
 
 # ---------------------------------------------------------------------------
 # PostgreSQLBackend unit tests (no live DB)

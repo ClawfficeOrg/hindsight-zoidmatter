@@ -188,7 +188,7 @@ async def retrieve_semantic_bm25_combined(
                 f"   {tags_clause}"
                 f"   {groups_clause}"
                 f" ORDER BY VECTOR_DISTANCE(embedding, $1, COSINE)"
-                f" FETCH FIRST {hnsw_fetch} ROWS ONLY)"
+                f" FETCH FIRST {hnsw_fetch} ROWS ONLY) t"
             )
         else:
             sem_arms.append(
