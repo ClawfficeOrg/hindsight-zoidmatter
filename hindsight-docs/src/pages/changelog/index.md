@@ -6,6 +6,115 @@ import PageHero from '@site/src/components/PageHero';
 
 <PageHero title="Changelog" subtitle="User-facing changes only. Internal maintenance and infrastructure updates are omitted." />
 
+## [0.5.2](https://github.com/vectorize-io/hindsight/releases/tag/v0.5.2)
+
+**Features**
+
+- Added a co-occurrence graph view for exploring entity relationships in the control plane.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/nicoloboschi" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}><img src="https://github.com/nicoloboschi.png?size=40" alt="@nicoloboschi" width="18" height="18" style={{borderRadius: "50%"}} />@nicoloboschi</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/f64c5d20" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>f64c5d20</a>
+- Added recall controls to the mental model trigger API/CLI so you can tune what gets recalled during runs.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/nicoloboschi" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}><img src="https://github.com/nicoloboschi.png?size=40" alt="@nicoloboschi" width="18" height="18" style={{borderRadius: "50%"}} />@nicoloboschi</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/f2fc8f9f" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>f2fc8f9f</a>
+- Async operations now expose task payload details and associated document IDs for better observability and debugging.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/nicoloboschi" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}><img src="https://github.com/nicoloboschi.png?size=40" alt="@nicoloboschi" width="18" height="18" style={{borderRadius: "50%"}} />@nicoloboschi</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/870bf4a3" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>870bf4a3</a>
+
+**Improvements**
+
+- Revamped the control plane bank statistics view for clearer insights.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/nicoloboschi" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}><img src="https://github.com/nicoloboschi.png?size=40" alt="@nicoloboschi" width="18" height="18" style={{borderRadius: "50%"}} />@nicoloboschi</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/34365c32" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>34365c32</a>
+- Clients now send an identifying User-Agent header on all HTTP requests for easier server-side diagnostics.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/nicoloboschi" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}><img src="https://github.com/nicoloboschi.png?size=40" alt="@nicoloboschi" width="18" height="18" style={{borderRadius: "50%"}} />@nicoloboschi</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/9372462e" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>9372462e</a>
+
+**Bug Fixes**
+
+- Fixed consolidation retry budget handling so retries are correctly applied at the LLM call site.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/r266-tech" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}><img src="https://github.com/r266-tech.png?size=40" alt="@r266-tech" width="18" height="18" style={{borderRadius: "50%"}} />@r266-tech</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/dee58139" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>dee58139</a>
+- Fixed a crash during retain when embeddings and extracted facts counts didn’t match.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/nicoloboschi" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}><img src="https://github.com/nicoloboschi.png?size=40" alt="@nicoloboschi" width="18" height="18" style={{borderRadius: "50%"}} />@nicoloboschi</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/dbd1d1a7" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>dbd1d1a7</a>
+- Improved embedded mode cleanup stability by adding a timeout when acquiring the cleanup lock (prevents hangs).<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/r266-tech" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}><img src="https://github.com/r266-tech.png?size=40" alt="@r266-tech" width="18" height="18" style={{borderRadius: "50%"}} />@r266-tech</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/6b5aa3af" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>6b5aa3af</a>
+- OpenClaw plugins now reliably register agent hooks on every entry invocation.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/nicoloboschi" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}><img src="https://github.com/nicoloboschi.png?size=40" alt="@nicoloboschi" width="18" height="18" style={{borderRadius: "50%"}} />@nicoloboschi</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/1be5ff33" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>1be5ff33</a>
+- TypeScript SDK now re-exports BankTemplate types from the package root for simpler imports.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/mrkhachaturov" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}><img src="https://github.com/mrkhachaturov.png?size=40" alt="@mrkhachaturov" width="18" height="18" style={{borderRadius: "50%"}} />@mrkhachaturov</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/581bbf3f" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>581bbf3f</a>
+- Bank template configuration validation was aligned with configurable fields to prevent invalid/ignored settings.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/mrkhachaturov" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}><img src="https://github.com/mrkhachaturov.png?size=40" alt="@mrkhachaturov" width="18" height="18" style={{borderRadius: "50%"}} />@mrkhachaturov</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/099f4c92" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>099f4c92</a>
+
+## [0.5.1](https://github.com/vectorize-io/hindsight/releases/tag/v0.5.1)
+
+**Breaking Changes**
+
+- OpenClaw now reads configuration from plugin config instead of environment variables. ([`e22ae05f`](https://github.com/vectorize-io/hindsight/commit/e22ae05f))
+
+**Features**
+
+- Added SiliconFlow as a supported reranker provider. ([`d0b2ab9a`](https://github.com/vectorize-io/hindsight/commit/d0b2ab9a))
+- Added an interactive OpenClaw setup wizard with Cloud / API / Embedded modes. ([`87322396`](https://github.com/vectorize-io/hindsight/commit/87322396))
+- Added a config-aware CLI to backfill OpenClaw history. ([`72fd3d59`](https://github.com/vectorize-io/hindsight/commit/72fd3d59))
+- Added OpenClaw session pattern filtering to ignore or treat sessions as stateless. ([`5a61ac50`](https://github.com/vectorize-io/hindsight/commit/5a61ac50))
+- Added a Cloudflare OAuth proxy integration option for self-hosted Hindsight. ([`aad07a14`](https://github.com/vectorize-io/hindsight/commit/aad07a14))
+- Expanded the CLI to cover all OpenAPI endpoints and request-body parameters. ([`c05c491d`](https://github.com/vectorize-io/hindsight/commit/c05c491d))
+- Added a default bank template environment variable (HINDSIGHT_API_DEFAULT_BANK_TEMPLATE). ([`fc941d5c`](https://github.com/vectorize-io/hindsight/commit/fc941d5c))
+- Added a daemon lifecycle package (@vectorize-io/hindsight-all) to simplify running the all-in-one daemon. ([`576016f5`](https://github.com/vectorize-io/hindsight/commit/576016f5))
+- Added recallTags and recallTagsMatch configuration options to control which tagged memories are recalled. ([`b57e337f`](https://github.com/vectorize-io/hindsight/commit/b57e337f))
+
+**Improvements**
+
+- Improved OpenClaw reliability with more resilient startup behavior and richer retain metadata. ([`1f1716bd`](https://github.com/vectorize-io/hindsight/commit/1f1716bd))
+
+**Bug Fixes**
+
+- OpenClaw setup wizard now prompts for the token value (not the env var name). ([`9679d813`](https://github.com/vectorize-io/hindsight/commit/9679d813))
+- Fixed embedded mode daemon start/stop race that could terminate healthy daemons. ([`e5724fcb`](https://github.com/vectorize-io/hindsight/commit/e5724fcb))
+- Fixed reranker initialization issues to show real import errors and avoid a Transformers 5.x race in jina-mlx. ([`f82f58fa`](https://github.com/vectorize-io/hindsight/commit/f82f58fa))
+- Fixed worker consolidation slot accounting to respect the configured maximum concurrency. ([`2d74007d`](https://github.com/vectorize-io/hindsight/commit/2d74007d))
+- Improved CLI API error output by including the HTTP response body. ([`93300b91`](https://github.com/vectorize-io/hindsight/commit/93300b91))
+- Fixed CLI memory listing showing "[UNKNOWN]" for fact types. ([`2635bbb4`](https://github.com/vectorize-io/hindsight/commit/2635bbb4))
+- Fixed recall ranking so RRF ordering is preserved when the reranker is configured as a passthrough. ([`4f9cf15c`](https://github.com/vectorize-io/hindsight/commit/4f9cf15c))
+- Fixed retain chunk insertion to be idempotent and avoid repeated retries on integrity errors. ([`2d95f78b`](https://github.com/vectorize-io/hindsight/commit/2d95f78b))
+- Fixed retain ANN seed temp table creation to run inside a transaction for better reliability. ([`3fc87e76`](https://github.com/vectorize-io/hindsight/commit/3fc87e76))
+- Fixed LLM requests to use the correct max token parameter for reasoning models and Azure OpenAI. ([`7b2263ba`](https://github.com/vectorize-io/hindsight/commit/7b2263ba))
+
+## [0.5.0](https://github.com/vectorize-io/hindsight/releases/tag/v0.5.0)
+
+**Breaking Changes**
+
+- Removed BFS and MPFP graph retrieval strategies. LinkExpansionRetriever is now the sole graph retrieval algorithm, offering simpler, faster, and more accurate results. ([`ea834bc7`](https://github.com/vectorize-io/hindsight/commit/ea834bc7))
+- Dropped the `hindsight-hermes` integration package. ([`cf0537ba`](https://github.com/vectorize-io/hindsight/commit/cf0537ba))
+
+**Features**
+
+- Built-in llama.cpp LLM provider for fully local inference without external API calls. ([`f74b577e`](https://github.com/vectorize-io/hindsight/commit/f74b577e))
+- Retain `update_mode='append'` for concatenating new content onto an existing document instead of replacing it. ([`3c633e5e`](https://github.com/vectorize-io/hindsight/commit/3c633e5e))
+- OpenRouter support for LLM, embeddings, and reranking. ([`e5944b63`](https://github.com/vectorize-io/hindsight/commit/e5944b63))
+- Bank template import/export with Template Hub — export a bank's configuration, mental models, and directives as a reusable manifest, then import into other banks. ([`30a319a6`](https://github.com/vectorize-io/hindsight/commit/30a319a6))
+- Constellation view in the Control Plane — interactive, zoomable canvas visualization of entity relationship graphs with heat-gradient coloring and dark mode support. ([`36783df3`](https://github.com/vectorize-io/hindsight/commit/36783df3))
+- Added `detail` parameter to list/get mental model endpoints for controlling response verbosity. ([`8d1bfbbd`](https://github.com/vectorize-io/hindsight/commit/8d1bfbbd))
+- Added AutoGen integration (`hindsight-autogen`) for persistent long-term memory in AutoGen agents. ([`a757765a`](https://github.com/vectorize-io/hindsight/commit/a757765a))
+- Added Paperclip integration (`@vectorize-io/hindsight-paperclip`) with Express middleware and process adapter modes for stateless agent memory. ([`81441ee9`](https://github.com/vectorize-io/hindsight/commit/81441ee9))
+- Added OpenCode persistent memory plugin for the OpenCode editor. ([`e1c6220f`](https://github.com/vectorize-io/hindsight/commit/e1c6220f))
+- OpenClaw JSONL-backed retain queue for external API resilience — buffers retain calls locally when the API is unreachable. ([`087545cc`](https://github.com/vectorize-io/hindsight/commit/087545cc))
+- OpenClaw now supports `bankId` for static bank configurations. ([`0e81d1a2`](https://github.com/vectorize-io/hindsight/commit/0e81d1a2))
+- Added Google embeddings and reranker provider support. ([`07de798c`](https://github.com/vectorize-io/hindsight/commit/07de798c))
+- Added persistent volume support in Helm chart for local model cache. ([`cefa7554`](https://github.com/vectorize-io/hindsight/commit/cefa7554))
+- MCP server now includes a `sync_retain` tool and validates UUID inputs. ([`48185a4b`](https://github.com/vectorize-io/hindsight/commit/48185a4b))
+- Recall combined scoring now includes `proof_count` boost for better ranking. ([`26794aab`](https://github.com/vectorize-io/hindsight/commit/26794aab))
+
+**Improvements**
+
+- 3-phase retain pipeline restructures memory ingestion into pre-resolve, insert, and post-link phases, dramatically improving throughput under concurrent load by removing slow reads from write transactions. ([`914ba796`](https://github.com/vectorize-io/hindsight/commit/914ba796))
+- Recall entity graph expansion now caps per-entity fanout and includes a timeout fallback, preventing slow queries on banks with high-fanout entities. ([`57f15445`](https://github.com/vectorize-io/hindsight/commit/57f15445))
+- Fact serialization in think-prompt now includes `occurred_end` and `mentioned_at` for richer temporal context. ([`37348c85`](https://github.com/vectorize-io/hindsight/commit/37348c85))
+- Consolidation observation quality improved with structured processing rules. ([`6f173b10`](https://github.com/vectorize-io/hindsight/commit/6f173b10))
+
+**Bug Fixes**
+
+- LiteLLM SDK embeddings `encoding_format` is now configurable instead of hardcoded. ([`cece2c90`](https://github.com/vectorize-io/hindsight/commit/cece2c90))
+- Fixed out-of-range `content_index` crash in recall result mapping. ([`9790d904`](https://github.com/vectorize-io/hindsight/commit/9790d904))
+- Experience fact types are now preserved correctly during normalization. ([`9cfdd464`](https://github.com/vectorize-io/hindsight/commit/9cfdd464))
+- Clear memories endpoint no longer deletes the bank profile. ([`26a64cc0`](https://github.com/vectorize-io/hindsight/commit/26a64cc0))
+- Embedding daemon clears stale processes on the port before starting. ([`7d6c570a`](https://github.com/vectorize-io/hindsight/commit/7d6c570a))
+- Per-bank vector index migration now respects vector extension configuration. ([`4fd7c5d1`](https://github.com/vectorize-io/hindsight/commit/4fd7c5d1))
+- Timeline group sort uses numeric date comparison instead of locale string comparison. ([`f3f2c6b0`](https://github.com/vectorize-io/hindsight/commit/f3f2c6b0))
+- Resolved 25 test regressions from the streaming retain pipeline. ([`7415ebff`](https://github.com/vectorize-io/hindsight/commit/7415ebff))
+- MCP server now auto-coerces string-encoded JSON in tool arguments. ([`443c94c8`](https://github.com/vectorize-io/hindsight/commit/443c94c8))
+- Entity labels structure is now validated on PATCH to prevent invalid configurations. ([`7e23f8e1`](https://github.com/vectorize-io/hindsight/commit/7e23f8e1))
+- Fixed `bank_id` metric label to be opt-in, preventing OTel memory leak. ([`cf4bd598`](https://github.com/vectorize-io/hindsight/commit/cf4bd598))
+- Fixed `max_tokens` handling for OpenAI-compatible endpoints with custom base URLs. ([`cd99eef4`](https://github.com/vectorize-io/hindsight/commit/cd99eef4))
+- Fixed `event_date` AttributeError when date is None in fact extraction. ([`6cb309f7`](https://github.com/vectorize-io/hindsight/commit/6cb309f7))
+- Query analyzer now handles dateparser internal crashes gracefully. ([`e0e65c44`](https://github.com/vectorize-io/hindsight/commit/e0e65c44))
+- Embedding profile `.env` overwrite skipped when config has no Hindsight keys. ([`9e2890ba`](https://github.com/vectorize-io/hindsight/commit/9e2890ba))
+- Windows compatibility fix for hindsight-embed. ([`f9fe6953`](https://github.com/vectorize-io/hindsight/commit/f9fe6953))
+- Addressed critical and high severity security vulnerabilities in dependencies. ([`ee4510a7`](https://github.com/vectorize-io/hindsight/commit/ee4510a7))
+
 ## [0.4.22](https://github.com/vectorize-io/hindsight/releases/tag/v0.4.22)
 
 **Features**

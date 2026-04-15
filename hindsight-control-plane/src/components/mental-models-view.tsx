@@ -101,6 +101,9 @@ interface MentalModel {
     exclude_mental_model_ids?: string[];
     tags_match?: TagsMatch;
     tag_groups?: TagGroup[];
+    include_chunks?: boolean;
+    recall_max_tokens?: number;
+    recall_chunks_max_tokens?: number;
   };
   last_refreshed_at: string;
   created_at: string;
@@ -381,75 +384,73 @@ export function MentalModelsView() {
 
               {/* Table View */}
               {viewMode === "table" && (
-                <div className="border rounded-lg overflow-hidden">
-                  <Table className="table-fixed">
-                    <TableHeader>
-                      <TableRow className="bg-muted/50">
-                        <TableHead className="w-[20%]">ID</TableHead>
-                        <TableHead className="w-[20%]">Name</TableHead>
-                        <TableHead className="w-[35%]">Source Query</TableHead>
-                        <TableHead className="w-[15%]">Last Refreshed</TableHead>
-                        <TableHead className="w-[10%]"></TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {paginatedMentalModels.map((m) => {
-                        const refreshedDate = new Date(m.last_refreshed_at);
-                        const dateDisplay = refreshedDate.toLocaleDateString("en-US", {
-                          month: "short",
-                          day: "numeric",
-                          year: "numeric",
-                        });
-                        const timeDisplay = refreshedDate.toLocaleTimeString("en-US", {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                          hour12: false,
-                        });
+                <Table className="table-fixed">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-[20%]">ID</TableHead>
+                      <TableHead className="w-[20%]">Name</TableHead>
+                      <TableHead className="w-[35%]">Source Query</TableHead>
+                      <TableHead className="w-[15%]">Last Refreshed</TableHead>
+                      <TableHead className="w-[10%]"></TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {paginatedMentalModels.map((m) => {
+                      const refreshedDate = new Date(m.last_refreshed_at);
+                      const dateDisplay = refreshedDate.toLocaleDateString("en-US", {
+                        month: "short",
+                        day: "numeric",
+                        year: "numeric",
+                      });
+                      const timeDisplay = refreshedDate.toLocaleTimeString("en-US", {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                        hour12: false,
+                      });
 
-                        return (
-                          <TableRow
-                            key={m.id}
-                            className={`cursor-pointer hover:bg-muted/50 ${
-                              selectedMentalModel?.id === m.id ? "bg-primary/10" : ""
-                            }`}
-                            onClick={() => setSelectedMentalModel(m)}
-                          >
-                            <TableCell className="py-2">
-                              <code className="text-xs font-mono text-muted-foreground truncate block">
-                                {m.id}
-                              </code>
-                            </TableCell>
-                            <TableCell className="py-2">
-                              <div className="font-medium text-foreground">{m.name}</div>
-                            </TableCell>
-                            <TableCell className="py-2">
-                              <div className="text-sm text-muted-foreground truncate">
-                                {m.source_query}
-                              </div>
-                            </TableCell>
-                            <TableCell className="py-2 text-sm text-foreground">
-                              <div>{dateDisplay}</div>
-                              <div className="text-xs text-muted-foreground">{timeDisplay}</div>
-                            </TableCell>
-                            <TableCell className="py-2">
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setDeleteTarget({ id: m.id, name: m.name });
-                                }}
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            </TableCell>
-                          </TableRow>
-                        );
-                      })}
-                    </TableBody>
-                  </Table>
-                </div>
+                      return (
+                        <TableRow
+                          key={m.id}
+                          className={`cursor-pointer hover:bg-muted/50 ${
+                            selectedMentalModel?.id === m.id ? "bg-primary/10" : ""
+                          }`}
+                          onClick={() => setSelectedMentalModel(m)}
+                        >
+                          <TableCell className="py-2">
+                            <code className="text-xs font-mono text-muted-foreground truncate block">
+                              {m.id}
+                            </code>
+                          </TableCell>
+                          <TableCell className="py-2">
+                            <div className="font-medium text-foreground">{m.name}</div>
+                          </TableCell>
+                          <TableCell className="py-2">
+                            <div className="text-sm text-muted-foreground truncate">
+                              {m.source_query}
+                            </div>
+                          </TableCell>
+                          <TableCell className="py-2 text-sm text-foreground">
+                            <div>{dateDisplay}</div>
+                            <div className="text-xs text-muted-foreground">{timeDisplay}</div>
+                          </TableCell>
+                          <TableCell className="py-2">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setDeleteTarget({ id: m.id, name: m.name });
+                              }}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
               )}
 
               {/* Pagination Controls */}
@@ -613,6 +614,10 @@ function CreateMentalModelDialog({
     excludeMentalModelIds: "",
     tagsMatch: "" as string,
     tagGroups: "",
+    // Recall overrides for refresh: "" means inherit bank/global default
+    includeChunks: "" as "" | "true" | "false",
+    recallMaxTokens: "",
+    recallChunksMaxTokens: "",
   });
 
   const handleCreate = async () => {
@@ -643,6 +648,15 @@ function CreateMentalModelDialog({
         }
       }
 
+      const recallMaxTokens = form.recallMaxTokens.trim()
+        ? parseInt(form.recallMaxTokens, 10)
+        : undefined;
+      const recallChunksMaxTokens = form.recallChunksMaxTokens.trim()
+        ? parseInt(form.recallChunksMaxTokens, 10)
+        : undefined;
+      const includeChunks =
+        form.includeChunks === "true" ? true : form.includeChunks === "false" ? false : undefined;
+
       await client.createMentalModel(currentBank, {
         id: form.id.trim() || undefined,
         name: form.name.trim(),
@@ -656,6 +670,9 @@ function CreateMentalModelDialog({
           exclude_mental_model_ids: excludeIds.length > 0 ? excludeIds : undefined,
           tags_match: (form.tagsMatch as TagsMatch) || undefined,
           tag_groups: tagGroups,
+          include_chunks: includeChunks,
+          recall_max_tokens: recallMaxTokens,
+          recall_chunks_max_tokens: recallChunksMaxTokens,
         },
       });
 
@@ -671,6 +688,9 @@ function CreateMentalModelDialog({
         excludeMentalModelIds: "",
         tagsMatch: "",
         tagGroups: "",
+        includeChunks: "",
+        recallMaxTokens: "",
+        recallChunksMaxTokens: "",
       });
       onCreated();
     } catch (error) {
@@ -697,12 +717,15 @@ function CreateMentalModelDialog({
             excludeMentalModelIds: "",
             tagsMatch: "",
             tagGroups: "",
+            includeChunks: "",
+            recallMaxTokens: "",
+            recallChunksMaxTokens: "",
           });
           onClose();
         }
       }}
     >
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="sm:max-w-lg max-h-[90vh] flex flex-col">
         <DialogHeader>
           <DialogTitle>Create Mental Model</DialogTitle>
           <DialogDescription>
@@ -711,7 +734,7 @@ function CreateMentalModelDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <Tabs defaultValue="general" className="py-2">
+        <Tabs defaultValue="general" className="py-2 flex-1 min-h-0 overflow-y-auto">
           <TabsList className="w-full">
             <TabsTrigger value="general" className="flex-1">
               General
@@ -759,100 +782,177 @@ function CreateMentalModelDialog({
             </div>
           </TabsContent>
 
-          <TabsContent value="options" className="space-y-4 pt-4">
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-foreground">Tags</label>
-              <Input
-                value={form.tags}
-                onChange={(e) => setForm({ ...form, tags: e.target.value })}
-                placeholder="e.g., project-x, team-alpha (comma-separated)"
-              />
-            </div>
-            <div className="flex items-center space-x-2">
-              <Checkbox
-                id="auto-refresh"
-                checked={form.autoRefresh}
-                onCheckedChange={(checked) => setForm({ ...form, autoRefresh: checked === true })}
-              />
-              <label
-                htmlFor="auto-refresh"
-                className="text-sm font-medium text-foreground cursor-pointer"
-              >
-                Auto-refresh after consolidation
-              </label>
-            </div>
-            <div className="space-y-3">
-              <label className="text-sm font-medium text-foreground">Fact Types</label>
-              <FactTypeCheckboxGroup
-                value={form.factTypes}
-                onChange={(v) => setForm({ ...form, factTypes: v as FactType[] })}
-              />
-              <p className="text-xs text-muted-foreground">Leave empty to include all types.</p>
-            </div>
-            <div className="flex items-center space-x-2">
-              <Checkbox
-                id="exclude-mental-models"
-                checked={form.excludeMentalModels}
-                onCheckedChange={(checked) =>
-                  setForm({ ...form, excludeMentalModels: checked === true })
-                }
-              />
-              <label
-                htmlFor="exclude-mental-models"
-                className="text-sm font-medium text-foreground cursor-pointer"
-              >
-                Exclude all mental models
-              </label>
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-foreground">
-                Exclude Mental Model IDs
-              </label>
-              <Input
-                value={form.excludeMentalModelIds}
-                onChange={(e) => setForm({ ...form, excludeMentalModelIds: e.target.value })}
-                placeholder="e.g., model-a, model-b (comma-separated)"
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-foreground">Tags Match</label>
-              <Select
-                value={form.tagsMatch}
-                onValueChange={(v) => setForm({ ...form, tagsMatch: v === "default" ? "" : v })}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Default (all_strict when tags set)" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="default">Default (all_strict when tags set)</SelectItem>
-                  <SelectItem value="any">any — OR matching, includes untagged</SelectItem>
-                  <SelectItem value="all">all — AND matching, includes untagged</SelectItem>
-                  <SelectItem value="any_strict">
-                    any_strict — OR matching, excludes untagged
-                  </SelectItem>
-                  <SelectItem value="all_strict">
-                    all_strict — AND matching, excludes untagged
-                  </SelectItem>
-                </SelectContent>
-              </Select>
+          <TabsContent value="options" className="space-y-6 pt-4">
+            <section className="space-y-4">
+              <h3 className="text-sm font-semibold text-foreground border-b pb-1">Refresh</h3>
+              <div className="flex items-center space-x-2">
+                <Checkbox
+                  id="auto-refresh"
+                  checked={form.autoRefresh}
+                  onCheckedChange={(checked) => setForm({ ...form, autoRefresh: checked === true })}
+                />
+                <label
+                  htmlFor="auto-refresh"
+                  className="text-sm font-medium text-foreground cursor-pointer"
+                >
+                  Auto-refresh after consolidation
+                </label>
+              </div>
+            </section>
+
+            <section className="space-y-4">
+              <h3 className="text-sm font-semibold text-foreground border-b pb-1">
+                Other Mental Models
+              </h3>
+              <div className="flex items-center space-x-2">
+                <Checkbox
+                  id="exclude-mental-models"
+                  checked={form.excludeMentalModels}
+                  onCheckedChange={(checked) =>
+                    setForm({ ...form, excludeMentalModels: checked === true })
+                  }
+                />
+                <label
+                  htmlFor="exclude-mental-models"
+                  className="text-sm font-medium text-foreground cursor-pointer"
+                >
+                  Exclude all mental models
+                </label>
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-foreground">
+                  Exclude Mental Model IDs
+                </label>
+                <Input
+                  value={form.excludeMentalModelIds}
+                  onChange={(e) => setForm({ ...form, excludeMentalModelIds: e.target.value })}
+                  placeholder="e.g., model-a, model-b (comma-separated)"
+                />
+              </div>
+            </section>
+
+            <section className="space-y-4">
+              <h3 className="text-sm font-semibold text-foreground border-b pb-1">Tags</h3>
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-foreground">Tags</label>
+                <Input
+                  value={form.tags}
+                  onChange={(e) => setForm({ ...form, tags: e.target.value })}
+                  placeholder="e.g., project-x, team-alpha (comma-separated)"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Tags scope the model during reflect <strong>and</strong> filter source memories
+                  during refresh (default <code>all_strict</code>: only memories carrying every
+                  listed tag are read). If no memories have these tags yet, refresh will produce
+                  empty content — backfill tags on memories, or adjust <em>Tags Match</em> /{" "}
+                  <em>Tag Groups</em> below.
+                </p>
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-foreground">Tags Match</label>
+                <Select
+                  value={form.tagsMatch}
+                  onValueChange={(v) => setForm({ ...form, tagsMatch: v === "default" ? "" : v })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Default (all_strict when tags set)" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="default">Default (all_strict when tags set)</SelectItem>
+                    <SelectItem value="any">any — OR matching, includes untagged</SelectItem>
+                    <SelectItem value="all">all — AND matching, includes untagged</SelectItem>
+                    <SelectItem value="any_strict">
+                      any_strict — OR matching, excludes untagged
+                    </SelectItem>
+                    <SelectItem value="all_strict">
+                      all_strict — AND matching, excludes untagged
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Controls how the model&apos;s tags filter memories during refresh.
+                </p>
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-foreground">Tag Groups (JSON)</label>
+                <Textarea
+                  value={form.tagGroups}
+                  onChange={(e) => setForm({ ...form, tagGroups: e.target.value })}
+                  placeholder='e.g., [{"or": [{"tags": ["user:alice"], "match": "all_strict"}, {"tags": ["shared"]}]}]'
+                  rows={3}
+                  className="font-mono text-xs"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Compound boolean tag expressions for refresh filtering. Overrides flat tags when
+                  set.
+                </p>
+              </div>
+            </section>
+
+            <section className="space-y-4">
+              <h3 className="text-sm font-semibold text-foreground border-b pb-1">Recall</h3>
               <p className="text-xs text-muted-foreground">
-                Controls how the model&apos;s tags filter memories during refresh.
+                Override how the internal recall behaves when this model refreshes. Leave blank to
+                inherit the bank/global default.
               </p>
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-foreground">Tag Groups (JSON)</label>
-              <Textarea
-                value={form.tagGroups}
-                onChange={(e) => setForm({ ...form, tagGroups: e.target.value })}
-                placeholder='e.g., [{"or": [{"tags": ["user:alice"], "match": "all_strict"}, {"tags": ["shared"]}]}]'
-                rows={3}
-                className="font-mono text-xs"
-              />
-              <p className="text-xs text-muted-foreground">
-                Compound boolean tag expressions for refresh filtering. Overrides flat tags when
-                set.
-              </p>
-            </div>
+              <div className="space-y-3">
+                <label className="text-sm font-medium text-foreground">Fact Types</label>
+                <FactTypeCheckboxGroup
+                  value={form.factTypes}
+                  onChange={(v) => setForm({ ...form, factTypes: v as FactType[] })}
+                />
+                <p className="text-xs text-muted-foreground">Leave empty to include all types.</p>
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-foreground">Include chunks</label>
+                <Select
+                  value={form.includeChunks || "default"}
+                  onValueChange={(v) =>
+                    setForm({
+                      ...form,
+                      includeChunks: v === "default" ? "" : (v as "true" | "false"),
+                    })
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="default">Default (inherit)</SelectItem>
+                    <SelectItem value="true">Yes — include raw chunk text</SelectItem>
+                    <SelectItem value="false">No — skip chunks (smaller prompt)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-foreground">Recall max tokens</label>
+                <Input
+                  type="number"
+                  value={form.recallMaxTokens}
+                  onChange={(e) => setForm({ ...form, recallMaxTokens: e.target.value })}
+                  placeholder="Default (inherit)"
+                  min="0"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Token budget for facts returned by recall.
+                </p>
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-foreground">
+                  Recall chunks max tokens
+                </label>
+                <Input
+                  type="number"
+                  value={form.recallChunksMaxTokens}
+                  onChange={(e) => setForm({ ...form, recallChunksMaxTokens: e.target.value })}
+                  placeholder="Default (inherit)"
+                  min="0"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Token budget for raw chunk text returned by recall.
+                </p>
+              </div>
+            </section>
           </TabsContent>
         </Tabs>
 
@@ -892,7 +992,7 @@ function UpdateMentalModelDialog({
 }) {
   const { currentBank } = useBank();
   const [updating, setUpdating] = useState(false);
-  const [form, setForm] = useState({
+  const buildFormState = () => ({
     name: mentalModel.name,
     sourceQuery: mentalModel.source_query,
     maxTokens: String(mentalModel.max_tokens || 2048),
@@ -908,28 +1008,26 @@ function UpdateMentalModelDialog({
     tagGroups: mentalModel.trigger?.tag_groups
       ? JSON.stringify(mentalModel.trigger.tag_groups, null, 2)
       : "",
+    includeChunks: (mentalModel.trigger?.include_chunks === true
+      ? "true"
+      : mentalModel.trigger?.include_chunks === false
+        ? "false"
+        : "") as "" | "true" | "false",
+    recallMaxTokens:
+      mentalModel.trigger?.recall_max_tokens != null
+        ? String(mentalModel.trigger.recall_max_tokens)
+        : "",
+    recallChunksMaxTokens:
+      mentalModel.trigger?.recall_chunks_max_tokens != null
+        ? String(mentalModel.trigger.recall_chunks_max_tokens)
+        : "",
   });
+  const [form, setForm] = useState(buildFormState);
 
   // Reset form when mental model changes or dialog opens
   useEffect(() => {
     if (open) {
-      setForm({
-        name: mentalModel.name,
-        sourceQuery: mentalModel.source_query,
-        maxTokens: String(mentalModel.max_tokens || 2048),
-        tags: mentalModel.tags.join(", "),
-        autoRefresh: mentalModel.trigger?.refresh_after_consolidation || false,
-        factTypes:
-          (mentalModel.trigger?.fact_types as
-            | Array<"world" | "experience" | "observation">
-            | undefined) || [],
-        excludeMentalModels: mentalModel.trigger?.exclude_mental_models || false,
-        excludeMentalModelIds: (mentalModel.trigger?.exclude_mental_model_ids || []).join(", "),
-        tagsMatch: (mentalModel.trigger?.tags_match as string) || "",
-        tagGroups: mentalModel.trigger?.tag_groups
-          ? JSON.stringify(mentalModel.trigger.tag_groups, null, 2)
-          : "",
-      });
+      setForm(buildFormState());
     }
   }, [open, mentalModel]);
 
@@ -960,6 +1058,15 @@ function UpdateMentalModelDialog({
         }
       }
 
+      const recallMaxTokens = form.recallMaxTokens.trim()
+        ? parseInt(form.recallMaxTokens, 10)
+        : undefined;
+      const recallChunksMaxTokens = form.recallChunksMaxTokens.trim()
+        ? parseInt(form.recallChunksMaxTokens, 10)
+        : undefined;
+      const includeChunks =
+        form.includeChunks === "true" ? true : form.includeChunks === "false" ? false : undefined;
+
       const updated = await client.updateMentalModel(currentBank, mentalModel.id, {
         name: form.name.trim(),
         source_query: form.sourceQuery.trim(),
@@ -972,6 +1079,9 @@ function UpdateMentalModelDialog({
           exclude_mental_model_ids: excludeIds.length > 0 ? excludeIds : undefined,
           tags_match: (form.tagsMatch as TagsMatch) || undefined,
           tag_groups: tagGroups,
+          include_chunks: includeChunks,
+          recall_max_tokens: recallMaxTokens,
+          recall_chunks_max_tokens: recallChunksMaxTokens,
         },
       });
 
@@ -986,7 +1096,7 @@ function UpdateMentalModelDialog({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="sm:max-w-lg max-h-[90vh] flex flex-col">
         <DialogHeader>
           <DialogTitle>Update Mental Model</DialogTitle>
           <DialogDescription>
@@ -994,7 +1104,7 @@ function UpdateMentalModelDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <Tabs defaultValue="general" className="py-2">
+        <Tabs defaultValue="general" className="py-2 flex-1 min-h-0 overflow-y-auto">
           <TabsList className="w-full">
             <TabsTrigger value="general" className="flex-1">
               General
@@ -1038,100 +1148,177 @@ function UpdateMentalModelDialog({
             </div>
           </TabsContent>
 
-          <TabsContent value="options" className="space-y-4 pt-4">
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-foreground">Tags</label>
-              <Input
-                value={form.tags}
-                onChange={(e) => setForm({ ...form, tags: e.target.value })}
-                placeholder="e.g., project-x, team-alpha (comma-separated)"
-              />
-            </div>
-            <div className="flex items-center space-x-2">
-              <Checkbox
-                id="update-auto-refresh"
-                checked={form.autoRefresh}
-                onCheckedChange={(checked) => setForm({ ...form, autoRefresh: checked === true })}
-              />
-              <label
-                htmlFor="update-auto-refresh"
-                className="text-sm font-medium text-foreground cursor-pointer"
-              >
-                Auto-refresh after consolidation
-              </label>
-            </div>
-            <div className="space-y-3">
-              <label className="text-sm font-medium text-foreground">Fact Types</label>
-              <FactTypeCheckboxGroup
-                value={form.factTypes}
-                onChange={(v) => setForm({ ...form, factTypes: v as FactType[] })}
-              />
-              <p className="text-xs text-muted-foreground">Leave empty to include all types.</p>
-            </div>
-            <div className="flex items-center space-x-2">
-              <Checkbox
-                id="update-exclude-mental-models"
-                checked={form.excludeMentalModels}
-                onCheckedChange={(checked) =>
-                  setForm({ ...form, excludeMentalModels: checked === true })
-                }
-              />
-              <label
-                htmlFor="update-exclude-mental-models"
-                className="text-sm font-medium text-foreground cursor-pointer"
-              >
-                Exclude all mental models
-              </label>
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-foreground">
-                Exclude Mental Model IDs
-              </label>
-              <Input
-                value={form.excludeMentalModelIds}
-                onChange={(e) => setForm({ ...form, excludeMentalModelIds: e.target.value })}
-                placeholder="e.g., model-a, model-b (comma-separated)"
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-foreground">Tags Match</label>
-              <Select
-                value={form.tagsMatch || "default"}
-                onValueChange={(v) => setForm({ ...form, tagsMatch: v === "default" ? "" : v })}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Default (all_strict when tags set)" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="default">Default (all_strict when tags set)</SelectItem>
-                  <SelectItem value="any">any — OR matching, includes untagged</SelectItem>
-                  <SelectItem value="all">all — AND matching, includes untagged</SelectItem>
-                  <SelectItem value="any_strict">
-                    any_strict — OR matching, excludes untagged
-                  </SelectItem>
-                  <SelectItem value="all_strict">
-                    all_strict — AND matching, excludes untagged
-                  </SelectItem>
-                </SelectContent>
-              </Select>
+          <TabsContent value="options" className="space-y-6 pt-4">
+            <section className="space-y-4">
+              <h3 className="text-sm font-semibold text-foreground border-b pb-1">Refresh</h3>
+              <div className="flex items-center space-x-2">
+                <Checkbox
+                  id="update-auto-refresh"
+                  checked={form.autoRefresh}
+                  onCheckedChange={(checked) => setForm({ ...form, autoRefresh: checked === true })}
+                />
+                <label
+                  htmlFor="update-auto-refresh"
+                  className="text-sm font-medium text-foreground cursor-pointer"
+                >
+                  Auto-refresh after consolidation
+                </label>
+              </div>
+            </section>
+
+            <section className="space-y-4">
+              <h3 className="text-sm font-semibold text-foreground border-b pb-1">
+                Other Mental Models
+              </h3>
+              <div className="flex items-center space-x-2">
+                <Checkbox
+                  id="update-exclude-mental-models"
+                  checked={form.excludeMentalModels}
+                  onCheckedChange={(checked) =>
+                    setForm({ ...form, excludeMentalModels: checked === true })
+                  }
+                />
+                <label
+                  htmlFor="update-exclude-mental-models"
+                  className="text-sm font-medium text-foreground cursor-pointer"
+                >
+                  Exclude all mental models
+                </label>
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-foreground">
+                  Exclude Mental Model IDs
+                </label>
+                <Input
+                  value={form.excludeMentalModelIds}
+                  onChange={(e) => setForm({ ...form, excludeMentalModelIds: e.target.value })}
+                  placeholder="e.g., model-a, model-b (comma-separated)"
+                />
+              </div>
+            </section>
+
+            <section className="space-y-4">
+              <h3 className="text-sm font-semibold text-foreground border-b pb-1">Tags</h3>
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-foreground">Tags</label>
+                <Input
+                  value={form.tags}
+                  onChange={(e) => setForm({ ...form, tags: e.target.value })}
+                  placeholder="e.g., project-x, team-alpha (comma-separated)"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Tags scope the model during reflect <strong>and</strong> filter source memories
+                  during refresh (default <code>all_strict</code>: only memories carrying every
+                  listed tag are read). If no memories have these tags yet, refresh will produce
+                  empty content — backfill tags on memories, or adjust <em>Tags Match</em> /{" "}
+                  <em>Tag Groups</em> below.
+                </p>
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-foreground">Tags Match</label>
+                <Select
+                  value={form.tagsMatch || "default"}
+                  onValueChange={(v) => setForm({ ...form, tagsMatch: v === "default" ? "" : v })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Default (all_strict when tags set)" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="default">Default (all_strict when tags set)</SelectItem>
+                    <SelectItem value="any">any — OR matching, includes untagged</SelectItem>
+                    <SelectItem value="all">all — AND matching, includes untagged</SelectItem>
+                    <SelectItem value="any_strict">
+                      any_strict — OR matching, excludes untagged
+                    </SelectItem>
+                    <SelectItem value="all_strict">
+                      all_strict — AND matching, excludes untagged
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Controls how the model&apos;s tags filter memories during refresh.
+                </p>
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-foreground">Tag Groups (JSON)</label>
+                <Textarea
+                  value={form.tagGroups}
+                  onChange={(e) => setForm({ ...form, tagGroups: e.target.value })}
+                  placeholder='e.g., [{"or": [{"tags": ["user:alice"], "match": "all_strict"}, {"tags": ["shared"]}]}]'
+                  rows={3}
+                  className="font-mono text-xs"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Compound boolean tag expressions for refresh filtering. Overrides flat tags when
+                  set.
+                </p>
+              </div>
+            </section>
+
+            <section className="space-y-4">
+              <h3 className="text-sm font-semibold text-foreground border-b pb-1">Recall</h3>
               <p className="text-xs text-muted-foreground">
-                Controls how the model&apos;s tags filter memories during refresh.
+                Override how the internal recall behaves when this model refreshes. Leave blank to
+                inherit the bank/global default.
               </p>
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-foreground">Tag Groups (JSON)</label>
-              <Textarea
-                value={form.tagGroups}
-                onChange={(e) => setForm({ ...form, tagGroups: e.target.value })}
-                placeholder='e.g., [{"or": [{"tags": ["user:alice"], "match": "all_strict"}, {"tags": ["shared"]}]}]'
-                rows={3}
-                className="font-mono text-xs"
-              />
-              <p className="text-xs text-muted-foreground">
-                Compound boolean tag expressions for refresh filtering. Overrides flat tags when
-                set.
-              </p>
-            </div>
+              <div className="space-y-3">
+                <label className="text-sm font-medium text-foreground">Fact Types</label>
+                <FactTypeCheckboxGroup
+                  value={form.factTypes}
+                  onChange={(v) => setForm({ ...form, factTypes: v as FactType[] })}
+                />
+                <p className="text-xs text-muted-foreground">Leave empty to include all types.</p>
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-foreground">Include chunks</label>
+                <Select
+                  value={form.includeChunks || "default"}
+                  onValueChange={(v) =>
+                    setForm({
+                      ...form,
+                      includeChunks: v === "default" ? "" : (v as "true" | "false"),
+                    })
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="default">Default (inherit)</SelectItem>
+                    <SelectItem value="true">Yes — include raw chunk text</SelectItem>
+                    <SelectItem value="false">No — skip chunks (smaller prompt)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-foreground">Recall max tokens</label>
+                <Input
+                  type="number"
+                  value={form.recallMaxTokens}
+                  onChange={(e) => setForm({ ...form, recallMaxTokens: e.target.value })}
+                  placeholder="Default (inherit)"
+                  min="0"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Token budget for facts returned by recall.
+                </p>
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-foreground">
+                  Recall chunks max tokens
+                </label>
+                <Input
+                  type="number"
+                  value={form.recallChunksMaxTokens}
+                  onChange={(e) => setForm({ ...form, recallChunksMaxTokens: e.target.value })}
+                  placeholder="Default (inherit)"
+                  min="0"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Token budget for raw chunk text returned by recall.
+                </p>
+              </div>
+            </section>
           </TabsContent>
         </Tabs>
 

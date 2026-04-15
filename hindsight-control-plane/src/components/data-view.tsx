@@ -212,6 +212,69 @@ export function DataView({ factType }: DataViewProps) {
   // Memoized color functions to prevent graph re-initialization
   // Uses brand colors: primary blue (#0074d9), teal (#009296), amber for entity, purple for causal
   const nodeColorFn = useCallback((node: GraphNode) => node.color || "#0074d9", []);
+
+  // For observations, size nodes by their proof_count (number of source facts
+  // consolidated into this observation) so "stronger" observations stand out.
+  const observationSizeLookup = useMemo(() => {
+    if (factType !== "observation" || !data?.table_rows) return null;
+    const counts = new Map<string, number>();
+    let max = 1;
+    for (const row of data.table_rows as Array<{ id: string; proof_count?: number | null }>) {
+      const c = row.proof_count ?? 1;
+      counts.set(row.id, c);
+      if (c > max) max = c;
+    }
+    return { counts, max };
+  }, [factType, data]);
+
+  // Recency heat — map each memory's most-recent timestamp to 0..1 (oldest → newest).
+  // Uses mentioned_at when available, else created_at. Sqrt gives mid-age memories
+  // a visible warmth instead of piling everything at the cool end.
+  const recencyLookup = useMemo(() => {
+    if (!data?.table_rows?.length) return null;
+    type Row = {
+      id: string;
+      mentioned_at?: string | null;
+      created_at?: string | null;
+    };
+    const times = new Map<string, number>();
+    let minT = Infinity;
+    let maxT = -Infinity;
+    for (const row of data.table_rows as Row[]) {
+      const ts = row.mentioned_at || row.created_at;
+      if (!ts) continue;
+      const t = Date.parse(ts);
+      if (Number.isNaN(t)) continue;
+      times.set(row.id, t);
+      if (t < minT) minT = t;
+      if (t > maxT) maxT = t;
+    }
+    if (!Number.isFinite(minT) || !Number.isFinite(maxT) || maxT === minT) {
+      return null;
+    }
+    return { times, minT, maxT };
+  }, [data]);
+
+  const recencyHeatFn = useCallback(
+    (node: GraphNode) => {
+      if (!recencyLookup) return 0.5;
+      const t = recencyLookup.times.get(node.id);
+      if (t === undefined) return 0;
+      return Math.sqrt((t - recencyLookup.minT) / (recencyLookup.maxT - recencyLookup.minT));
+    },
+    [recencyLookup]
+  );
+
+  const observationNodeSizeFn = useCallback(
+    (node: GraphNode) => {
+      if (!observationSizeLookup) return 3;
+      const c = observationSizeLookup.counts.get(node.id) ?? 1;
+      // proof_count=1 matches the default memory dot size; grows with sqrt so
+      // heavily-supported observations stand out without dwarfing the canvas.
+      return 3 + Math.min(Math.sqrt(c - 1) * 2, 11);
+    },
+    [observationSizeLookup]
+  );
   const linkColorFn = useCallback((link: any) => {
     if (link.type === "temporal") return "#009296"; // Brand teal
     if (link.type === "entity") return "#f59e0b"; // Amber
@@ -719,6 +782,11 @@ export function DataView({ factType }: DataViewProps) {
                   onNodeClick={handleGraphNodeClick}
                   nodeColorFn={nodeColorFn}
                   linkColorFn={linkColorFn}
+                  nodeSizeFn={factType === "observation" ? observationNodeSizeFn : undefined}
+                  sizeLegendLabel={factType === "observation" ? "source facts" : undefined}
+                  nodeHeatFn={recencyLookup ? recencyHeatFn : undefined}
+                  heatLegendLabel={recencyLookup ? "recency" : undefined}
+                  heatLegendEndpoints={recencyLookup ? ["older", "newer"] : undefined}
                 />
               </div>
 
@@ -809,133 +877,131 @@ export function DataView({ factType }: DataViewProps) {
 
                       return (
                         <>
-                          <div className="border rounded-lg overflow-hidden">
-                            <Table className="table-fixed">
-                              <TableHeader>
-                                <TableRow className="bg-muted/50">
-                                  <TableHead
-                                    className={factType === "observation" ? "w-[35%]" : "w-[38%]"}
-                                  >
-                                    {factType === "observation" ? "Observation" : "Memory"}
-                                  </TableHead>
-                                  <TableHead className="w-[15%]">Entities</TableHead>
-                                  <TableHead className="w-[15%]">Tags</TableHead>
-                                  {factType === "observation" && (
-                                    <TableHead className="w-[10%]">Sources</TableHead>
-                                  )}
-                                  <TableHead
-                                    className={factType === "observation" ? "w-[12%]" : "w-[16%]"}
-                                  >
-                                    Occurred
-                                  </TableHead>
-                                  <TableHead
-                                    className={factType === "observation" ? "w-[13%]" : "w-[16%]"}
-                                  >
-                                    Mentioned
-                                  </TableHead>
-                                </TableRow>
-                              </TableHeader>
-                              <TableBody>
-                                {paginatedRows.map((row: any, idx: number) => {
-                                  const occurredDisplay = row.occurred_start
-                                    ? new Date(row.occurred_start).toLocaleDateString("en-US", {
-                                        month: "short",
-                                        day: "numeric",
-                                        year: "numeric",
-                                      })
-                                    : null;
-                                  const mentionedDisplay = row.mentioned_at
-                                    ? new Date(row.mentioned_at).toLocaleDateString("en-US", {
-                                        month: "short",
-                                        day: "numeric",
-                                        year: "numeric",
-                                      })
-                                    : null;
+                          <Table className="table-fixed">
+                            <TableHeader>
+                              <TableRow>
+                                <TableHead
+                                  className={factType === "observation" ? "w-[35%]" : "w-[38%]"}
+                                >
+                                  {factType === "observation" ? "Observation" : "Memory"}
+                                </TableHead>
+                                <TableHead className="w-[15%]">Entities</TableHead>
+                                <TableHead className="w-[15%]">Tags</TableHead>
+                                {factType === "observation" && (
+                                  <TableHead className="w-[10%]">Sources</TableHead>
+                                )}
+                                <TableHead
+                                  className={factType === "observation" ? "w-[12%]" : "w-[16%]"}
+                                >
+                                  Occurred
+                                </TableHead>
+                                <TableHead
+                                  className={factType === "observation" ? "w-[13%]" : "w-[16%]"}
+                                >
+                                  Mentioned
+                                </TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {paginatedRows.map((row: any, idx: number) => {
+                                const occurredDisplay = row.occurred_start
+                                  ? new Date(row.occurred_start).toLocaleDateString("en-US", {
+                                      month: "short",
+                                      day: "numeric",
+                                      year: "numeric",
+                                    })
+                                  : null;
+                                const mentionedDisplay = row.mentioned_at
+                                  ? new Date(row.mentioned_at).toLocaleDateString("en-US", {
+                                      month: "short",
+                                      day: "numeric",
+                                      year: "numeric",
+                                    })
+                                  : null;
 
-                                  return (
-                                    <TableRow
-                                      key={row.id || idx}
-                                      onClick={() => setModalMemoryId(row.id)}
-                                      className="cursor-pointer hover:bg-muted/50"
-                                    >
-                                      <TableCell className="py-2">
-                                        <div className="line-clamp-2 text-sm leading-snug text-foreground">
-                                          {row.text}
+                                return (
+                                  <TableRow
+                                    key={row.id || idx}
+                                    onClick={() => setModalMemoryId(row.id)}
+                                    className="cursor-pointer hover:bg-muted/50"
+                                  >
+                                    <TableCell className="py-2">
+                                      <div className="line-clamp-2 text-sm leading-snug text-foreground">
+                                        {row.text}
+                                      </div>
+                                      {row.context && factType !== "observation" && (
+                                        <div className="text-xs text-muted-foreground mt-0.5 truncate">
+                                          {row.context}
                                         </div>
-                                        {row.context && factType !== "observation" && (
-                                          <div className="text-xs text-muted-foreground mt-0.5 truncate">
-                                            {row.context}
-                                          </div>
-                                        )}
-                                      </TableCell>
-                                      <TableCell className="py-2">
-                                        {row.entities ? (
-                                          <div className="flex gap-1 flex-wrap">
-                                            {row.entities
-                                              .split(", ")
-                                              .slice(0, 2)
-                                              .map((entity: string, i: number) => (
-                                                <span
-                                                  key={i}
-                                                  className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary font-medium"
-                                                >
-                                                  {entity}
-                                                </span>
-                                              ))}
-                                            {row.entities.split(", ").length > 2 && (
-                                              <span className="text-[10px] text-muted-foreground">
-                                                +{row.entities.split(", ").length - 2}
-                                              </span>
-                                            )}
-                                          </div>
-                                        ) : (
-                                          <span className="text-xs text-muted-foreground">-</span>
-                                        )}
-                                      </TableCell>
-                                      <TableCell className="py-2">
-                                        {row.tags && row.tags.length > 0 ? (
-                                          <div className="flex gap-1 flex-wrap">
-                                            {(row.tags as string[])
-                                              .slice(0, 2)
-                                              .map((tag: string, i: number) => (
-                                                <span
-                                                  key={i}
-                                                  className="text-[10px] px-1.5 py-0.5 rounded-md bg-amber-500/10 text-amber-700 border border-amber-500/20 font-medium font-mono"
-                                                >
-                                                  #{tag}
-                                                </span>
-                                              ))}
-                                            {row.tags.length > 2 && (
-                                              <span className="text-[10px] text-muted-foreground">
-                                                +{row.tags.length - 2}
-                                              </span>
-                                            )}
-                                          </div>
-                                        ) : (
-                                          <span className="text-xs text-muted-foreground">-</span>
-                                        )}
-                                      </TableCell>
-                                      {factType === "observation" && (
-                                        <TableCell className="text-xs py-2 text-foreground">
-                                          {row.proof_count ?? 1}
-                                        </TableCell>
                                       )}
+                                    </TableCell>
+                                    <TableCell className="py-2">
+                                      {row.entities ? (
+                                        <div className="flex gap-1 flex-wrap">
+                                          {row.entities
+                                            .split(", ")
+                                            .slice(0, 2)
+                                            .map((entity: string, i: number) => (
+                                              <span
+                                                key={i}
+                                                className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary font-medium"
+                                              >
+                                                {entity}
+                                              </span>
+                                            ))}
+                                          {row.entities.split(", ").length > 2 && (
+                                            <span className="text-[10px] text-muted-foreground">
+                                              +{row.entities.split(", ").length - 2}
+                                            </span>
+                                          )}
+                                        </div>
+                                      ) : (
+                                        <span className="text-xs text-muted-foreground">-</span>
+                                      )}
+                                    </TableCell>
+                                    <TableCell className="py-2">
+                                      {row.tags && row.tags.length > 0 ? (
+                                        <div className="flex gap-1 flex-wrap">
+                                          {(row.tags as string[])
+                                            .slice(0, 2)
+                                            .map((tag: string, i: number) => (
+                                              <span
+                                                key={i}
+                                                className="text-[10px] px-1.5 py-0.5 rounded-md bg-amber-500/10 text-amber-700 border border-amber-500/20 font-medium font-mono"
+                                              >
+                                                #{tag}
+                                              </span>
+                                            ))}
+                                          {row.tags.length > 2 && (
+                                            <span className="text-[10px] text-muted-foreground">
+                                              +{row.tags.length - 2}
+                                            </span>
+                                          )}
+                                        </div>
+                                      ) : (
+                                        <span className="text-xs text-muted-foreground">-</span>
+                                      )}
+                                    </TableCell>
+                                    {factType === "observation" && (
                                       <TableCell className="text-xs py-2 text-foreground">
-                                        {occurredDisplay || (
-                                          <span className="text-muted-foreground">-</span>
-                                        )}
+                                        {row.proof_count ?? 1}
                                       </TableCell>
-                                      <TableCell className="text-xs py-2 text-foreground">
-                                        {mentionedDisplay || (
-                                          <span className="text-muted-foreground">-</span>
-                                        )}
-                                      </TableCell>
-                                    </TableRow>
-                                  );
-                                })}
-                              </TableBody>
-                            </Table>
-                          </div>
+                                    )}
+                                    <TableCell className="text-xs py-2 text-foreground">
+                                      {occurredDisplay || (
+                                        <span className="text-muted-foreground">-</span>
+                                      )}
+                                    </TableCell>
+                                    <TableCell className="text-xs py-2 text-foreground">
+                                      {mentionedDisplay || (
+                                        <span className="text-muted-foreground">-</span>
+                                      )}
+                                    </TableCell>
+                                  </TableRow>
+                                );
+                              })}
+                            </TableBody>
+                          </Table>
 
                           {/* Pagination Controls */}
                           {totalPages > 1 && (

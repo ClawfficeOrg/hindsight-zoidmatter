@@ -24,11 +24,18 @@ import asyncpg
 import httpx
 import tiktoken
 
-from ..config import DEFAULT_REFLECT_SOURCE_FACTS_MAX_TOKENS, get_config
+from ..config import (
+    DEFAULT_RECALL_CHUNKS_MAX_TOKENS,
+    DEFAULT_RECALL_INCLUDE_CHUNKS,
+    DEFAULT_RECALL_MAX_TOKENS,
+    DEFAULT_REFLECT_SOURCE_FACTS_MAX_TOKENS,
+    get_config,
+)
 from ..metrics import get_metrics_collector
 from ..tracing import create_operation_span
 from ..utils import mask_network_location
 from ..worker.exceptions import RetryTaskAt
+from ..worker.stage import set_stage
 from .audit import AuditLogger, audit_context
 from .db_budget import budgeted_operation
 from .operation_metadata import (
@@ -225,6 +232,44 @@ def _get_tiktoken_encoding():
     if _TIKTOKEN_ENCODING is None:
         _TIKTOKEN_ENCODING = tiktoken.get_encoding("cl100k_base")
     return _TIKTOKEN_ENCODING
+
+
+@dataclass(frozen=True)
+class _TimeseriesPeriodConfig:
+    """How one period slices the time axis for the memories-ingested chart."""
+
+    interval: str  # postgres interval literal used in the `now() - interval '...'` filter
+    trunc: str  # date_trunc unit (minute/hour/day)
+    step: timedelta  # distance between adjacent buckets
+    count: int  # total buckets rendered for the period
+
+
+_MEMORIES_TIMESERIES_PERIODS: dict[str, _TimeseriesPeriodConfig] = {
+    "1h": _TimeseriesPeriodConfig("1 hour", "minute", timedelta(minutes=1), 60),
+    "12h": _TimeseriesPeriodConfig("12 hours", "hour", timedelta(hours=1), 12),
+    "1d": _TimeseriesPeriodConfig("24 hours", "hour", timedelta(hours=1), 24),
+    "7d": _TimeseriesPeriodConfig("7 days", "day", timedelta(days=1), 7),
+    "30d": _TimeseriesPeriodConfig("30 days", "day", timedelta(days=1), 30),
+    "90d": _TimeseriesPeriodConfig("90 days", "day", timedelta(days=1), 90),
+}
+
+
+@dataclass
+class MemoryTimeseriesBucketData:
+    """One bucket of the memories-ingested time series (engine-side)."""
+
+    time: str
+    world: int = 0
+    experience: int = 0
+    observation: int = 0
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "time": self.time,
+            "world": self.world,
+            "experience": self.experience,
+            "observation": self.observation,
+        }
 
 
 @dataclass(frozen=True)
@@ -951,6 +996,9 @@ class MemoryEngine(MemoryEngineInterface):
         fact_types = trigger_data.get("fact_types")
         exclude_mental_models = trigger_data.get("exclude_mental_models", False)
         stored_exclude_ids: list[str] = trigger_data.get("exclude_mental_model_ids") or []
+        recall_include_chunks_override = trigger_data.get("include_chunks")
+        recall_max_tokens_override = trigger_data.get("recall_max_tokens")
+        recall_chunks_max_tokens_override = trigger_data.get("recall_chunks_max_tokens")
 
         tag_filtering = _resolve_refresh_tag_filtering(mental_model.get("tags"), trigger_data)
 
@@ -966,6 +1014,9 @@ class MemoryEngine(MemoryEngineInterface):
             fact_types=fact_types,
             exclude_mental_models=exclude_mental_models,
             exclude_mental_model_ids=list({*stored_exclude_ids, mental_model_id}),
+            recall_include_chunks=recall_include_chunks_override,
+            recall_max_tokens_override=recall_max_tokens_override,
+            recall_chunks_max_tokens_override=recall_chunks_max_tokens_override,
         )
 
         generated_content = reflect_result.text or "No content generated"
@@ -1090,6 +1141,9 @@ class MemoryEngine(MemoryEngineInterface):
             self._audit_logger, task_type or "unknown", "system", bank_id, request=task_dict
         ) as audit_entry:
             try:
+                # Stage breadcrumb for the worker poller's WORKER_TASK log line.
+                # No-op outside a worker context.
+                set_stage(f"task.{task_type}")
                 if task_type == "batch_retain":
                     await self._handle_batch_retain(task_dict)
                 elif task_type == "file_convert_retain":
@@ -1138,6 +1192,26 @@ class MemoryEngine(MemoryEngineInterface):
                     # Non-retryable: mark as failed immediately.
                     # Conversion failures won't improve on retry (missing OCR, corrupted file, etc.)
                     logger.error(f"Not retrying task {task_type} (non-retryable), marking as failed")
+                    if operation_id:
+                        await self._mark_operation_failed(operation_id, str(e), error_traceback)
+                elif isinstance(e, asyncpg.exceptions.IntegrityConstraintViolationError):
+                    # Non-retryable: deterministic Postgres integrity violations
+                    # (UniqueViolationError, ForeignKeyViolationError, CheckViolationError,
+                    # NotNullViolationError, ExclusionViolationError) will never succeed on
+                    # retry — the offending row state is already committed. Retrying just
+                    # burns worker capacity. See vectorize-io/hindsight#980.
+                    logger.error(
+                        f"Not retrying task {task_type} (integrity violation, deterministic): {type(e).__name__}"
+                    )
+                    if task_type == "consolidation" and operation_id:
+                        await self._fire_consolidation_webhook(
+                            bank_id=task_dict.get("bank_id", ""),
+                            operation_id=operation_id,
+                            status="failed",
+                            result=None,
+                            error_message=str(e),
+                            schema=schema,
+                        )
                     if operation_id:
                         await self._mark_operation_failed(operation_id, str(e), error_traceback)
                 else:
@@ -1923,6 +1997,18 @@ class MemoryEngine(MemoryEngineInterface):
 
         self._initialized = False
 
+        # Clean up LLM providers (e.g. stop llamacpp subprocess)
+        for llm_config in (
+            self._llm_config,
+            self._retain_llm_config,
+            self._reflect_llm_config,
+            self._consolidation_llm_config,
+        ):
+            try:
+                await llm_config.cleanup()
+            except Exception as e:
+                logger.warning(f"Error cleaning up LLM provider: {e}")
+
         # Stop pg0 if we started it
         if self._pg0 is not None:
             logger.info("Stopping pg0...")
@@ -2145,6 +2231,11 @@ class MemoryEngine(MemoryEngineInterface):
                 f"Batch contains duplicate document_ids: {duplicates}. "
                 f"Each content item in a batch must have a unique document_id to avoid race conditions."
             )
+
+        # Validate update_mode=append requires document_id
+        for item in contents:
+            if item.get("update_mode") == "append" and not item.get("document_id"):
+                raise ValueError("update_mode='append' requires a document_id")
 
         # Auto-chunk large batches by token count to avoid timeouts and memory issues
         # Calculate total token count
@@ -2726,8 +2817,11 @@ class MemoryEngine(MemoryEngineInterface):
         pool = await self._get_pool()
         recall_start = time.time()
 
-        # Buffer logs for clean output in concurrent scenarios
-        recall_id = f"{bank_id[:8]}-{int(time.time() * 1000) % 100000}"
+        # Buffer logs for clean output in concurrent scenarios.
+        # Include a uuid suffix so two recalls on the same bank within the
+        # same millisecond don't collide on the budgeted_operation key
+        # (`recall-{recall_id}`), which would raise "Operation ... already exists".
+        recall_id = f"{bank_id[:8]}-{int(time.time() * 1000) % 100000}-{uuid.uuid4().hex[:6]}"
         log_buffer = []
         tags_info = f", tags={tags}, tags_match={tags_match}" if tags else ""
         log_buffer.append(
@@ -2748,7 +2842,8 @@ class MemoryEngine(MemoryEngineInterface):
             embedding_span.set_attribute("hindsight.query", query[:100])
 
             try:
-                query_embedding = embedding_utils.generate_embedding(self.embeddings, query)
+                query_embeddings = await embedding_utils.generate_embeddings_batch(self.embeddings, [query])
+                query_embedding = query_embeddings[0]
                 step_duration = time.time() - step_start
                 log_buffer.append(f"  [1] Generate query embedding: {step_duration:.3f}s")
             finally:
@@ -3069,8 +3164,13 @@ class MemoryEngine(MemoryEngineInterface):
 
             # Step 4.5: Combine cross-encoder score with retrieval signals via multiplicative boosts.
             # See apply_combined_scoring for the full rationale and formula.
+            # is_passthrough_reranker tells the scoring code to seed CE scores
+            # from RRF rank — only meaningful when the configured reranker is
+            # the slim/passthrough one that returns a constant score per pair.
             if scored_results:
-                apply_combined_scoring(scored_results, now=utcnow())
+                ce = reranker_instance.cross_encoder
+                is_passthrough = ce is not None and ce.provider_name == "rrf"
+                apply_combined_scoring(scored_results, now=utcnow(), is_passthrough_reranker=is_passthrough)
                 scored_results.sort(key=lambda x: x.weight, reverse=True)
                 log_buffer.append("  [4.6] Combined scoring: ce * recency_boost(0.2) * temporal_boost(0.2)")
 
@@ -5136,7 +5236,13 @@ class MemoryEngine(MemoryEngineInterface):
             ctx = BankReadContext(bank_id=bank_id, operation="get_bank_profile", request_context=request_context)
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
         pool = await self._get_pool()
-        profile = await bank_utils.get_bank_profile(pool, bank_id)
+        profile, created = await bank_utils.get_or_create_bank_profile(pool, bank_id)
+
+        # Apply HINDSIGHT_API_DEFAULT_BANK_TEMPLATE to freshly-created banks. Done
+        # before reading the resolved config below so the template's overrides
+        # (e.g. reflect_mission, dispositions) are visible on this very call.
+        if created:
+            await self._apply_default_bank_template(bank_id, request_context)
 
         # reflect_mission and disposition in config take precedence over the legacy DB columns
         config_dict = await self._config_resolver.get_bank_config(bank_id, request_context)
@@ -5160,6 +5266,62 @@ class MemoryEngine(MemoryEngineInterface):
             "disposition": disposition,
             "mission": mission,
         }
+
+    async def _apply_default_bank_template(
+        self,
+        bank_id: str,
+        request_context: "RequestContext",
+    ) -> None:
+        """Apply HINDSIGHT_API_DEFAULT_BANK_TEMPLATE to a freshly-created bank.
+
+        No-op if the env var is unset. A malformed default template is logged
+        and swallowed here rather than raised, so a bad server-level setting
+        cannot wedge bank creation across all callers. Misconfiguration is
+        still surfaced loudly via `logger.error`.
+        """
+        from ..config import get_config
+
+        template_dict = get_config().default_bank_template
+        if not template_dict:
+            return
+
+        # Lazy import to avoid a cycle (http.py imports memory_engine).
+        from pydantic import ValidationError
+
+        from hindsight_api.api.http import (
+            BankTemplateManifest,
+            apply_bank_template_manifest,
+            validate_bank_template,
+        )
+
+        try:
+            manifest = BankTemplateManifest.model_validate(template_dict)
+        except ValidationError as e:
+            errors = [f"{'.'.join(str(loc) for loc in err['loc'])}: {err['msg']}" for err in e.errors()]
+            logger.error(
+                "HINDSIGHT_API_DEFAULT_BANK_TEMPLATE failed schema validation "
+                f"and will be ignored for bank '{bank_id}': {'; '.join(errors)}"
+            )
+            return
+
+        semantic_errors = validate_bank_template(manifest)
+        if semantic_errors:
+            logger.error(
+                "HINDSIGHT_API_DEFAULT_BANK_TEMPLATE failed semantic validation "
+                f"and will be ignored for bank '{bank_id}': {'; '.join(semantic_errors)}"
+            )
+            return
+
+        try:
+            await apply_bank_template_manifest(
+                memory=self,
+                bank_id=bank_id,
+                manifest=manifest,
+                request_context=request_context,
+            )
+            logger.info(f"Applied HINDSIGHT_API_DEFAULT_BANK_TEMPLATE to newly-created bank '{bank_id}'")
+        except Exception as e:
+            logger.error(f"Failed to apply HINDSIGHT_API_DEFAULT_BANK_TEMPLATE to bank '{bank_id}': {e}")
 
     async def update_bank_disposition(
         self,
@@ -5287,6 +5449,9 @@ class MemoryEngine(MemoryEngineInterface):
         exclude_mental_model_ids: list[str] | None = None,
         fact_types: list[str] | None = None,
         exclude_mental_models: bool = False,
+        recall_include_chunks: bool | None = None,
+        recall_max_tokens_override: int | None = None,
+        recall_chunks_max_tokens_override: int | None = None,
         _skip_span: bool = False,
     ) -> ReflectResult:
         """
@@ -5409,6 +5574,23 @@ class MemoryEngine(MemoryEngineInterface):
             "reflect_source_facts_max_tokens", DEFAULT_REFLECT_SOURCE_FACTS_MAX_TOKENS
         )
 
+        # Resolve recall overrides: caller arg (e.g. mental model trigger) → bank config → env default
+        effective_recall_include_chunks = (
+            recall_include_chunks
+            if recall_include_chunks is not None
+            else config_dict.get("recall_include_chunks", DEFAULT_RECALL_INCLUDE_CHUNKS)
+        )
+        effective_recall_max_tokens = (
+            recall_max_tokens_override
+            if recall_max_tokens_override is not None
+            else config_dict.get("recall_max_tokens", DEFAULT_RECALL_MAX_TOKENS)
+        )
+        effective_recall_chunks_max_tokens = (
+            recall_chunks_max_tokens_override
+            if recall_chunks_max_tokens_override is not None
+            else config_dict.get("recall_chunks_max_tokens", DEFAULT_RECALL_CHUNKS_MAX_TOKENS)
+        )
+
         async def search_observations_fn(q: str, max_tokens: int = 5000) -> dict[str, Any]:
             return await tool_search_observations(
                 self,
@@ -5429,7 +5611,14 @@ class MemoryEngine(MemoryEngineInterface):
         recall_fact_types = [ft for ft in (fact_types or ["world", "experience"]) if ft in ("world", "experience")]
         include_recall = bool(recall_fact_types)
 
-        async def recall_fn(q: str, max_tokens: int = 4096, max_chunk_tokens: int = 1000) -> dict[str, Any]:
+        # Defaults are bound at closure-definition time (re-evaluated on each
+        # reflect_async call), so per-bank/per-trigger overrides apply when the
+        # agent invokes recall without explicit token args.
+        async def recall_fn(
+            q: str,
+            max_tokens: int = effective_recall_max_tokens,
+            max_chunk_tokens: int = effective_recall_chunks_max_tokens,
+        ) -> dict[str, Any]:
             return await tool_recall(
                 self,
                 bank_id,
@@ -5441,6 +5630,7 @@ class MemoryEngine(MemoryEngineInterface):
                 tag_groups=tag_groups,
                 max_chunk_tokens=max_chunk_tokens,
                 fact_types=recall_fact_types if fact_types is not None else None,
+                include_chunks=effective_recall_include_chunks,
             )
 
         async def expand_fn(memory_ids: list[str], depth: str) -> dict[str, Any]:
@@ -5796,6 +5986,108 @@ class MemoryEngine(MemoryEngineInterface):
                 "offset": offset,
             }
 
+    async def get_entity_graph(
+        self,
+        bank_id: str,
+        *,
+        limit: int = 1000,
+        min_count: int = 1,
+        request_context: "RequestContext",
+    ) -> dict[str, Any]:
+        """
+        Get entity co-occurrence graph for visualization.
+
+        Returns nodes for entities and edges from the materialized
+        entity_cooccurrences table. Edges are ordered by cooccurrence_count DESC
+        and capped at `limit` to keep the payload renderable.
+        """
+        await self._authenticate_tenant(request_context)
+        if self._operation_validator:
+            from hindsight_api.extensions import BankReadContext
+
+            ctx = BankReadContext(bank_id=bank_id, operation="get_entity_graph", request_context=request_context)
+            await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+        pool = await self._get_pool()
+        async with acquire_with_retry(pool) as conn:
+            edge_rows = await conn.fetch(
+                f"""
+                SELECT ec.entity_id_1,
+                       ec.entity_id_2,
+                       ec.cooccurrence_count,
+                       ec.last_cooccurred,
+                       e1.canonical_name AS name_1,
+                       e1.mention_count  AS mention_count_1,
+                       e2.canonical_name AS name_2,
+                       e2.mention_count  AS mention_count_2
+                FROM {fq_table("entity_cooccurrences")} ec
+                JOIN {fq_table("entities")} e1 ON e1.id = ec.entity_id_1
+                JOIN {fq_table("entities")} e2 ON e2.id = ec.entity_id_2
+                WHERE e1.bank_id = $1
+                  AND e2.bank_id = $1
+                  AND ec.cooccurrence_count >= $2
+                ORDER BY ec.cooccurrence_count DESC, ec.last_cooccurred DESC
+                LIMIT $3
+                """,
+                bank_id,
+                min_count,
+                limit,
+            )
+
+        @dataclass
+        class _EntityNode:
+            id: str
+            label: str
+            mention_count: int
+
+        nodes_by_id: dict[str, _EntityNode] = {}
+        edges: list[dict[str, Any]] = []
+        for row in edge_rows:
+            for eid, name, mentions in (
+                (row["entity_id_1"], row["name_1"], row["mention_count_1"]),
+                (row["entity_id_2"], row["name_2"], row["mention_count_2"]),
+            ):
+                key = str(eid)
+                if key not in nodes_by_id:
+                    nodes_by_id[key] = _EntityNode(id=key, label=name, mention_count=mentions or 0)
+
+            from_id = str(row["entity_id_1"])
+            to_id = str(row["entity_id_2"])
+            count = row["cooccurrence_count"]
+            edges.append(
+                {
+                    "data": {
+                        "id": f"{from_id}-{to_id}",
+                        "source": from_id,
+                        "target": to_id,
+                        "linkType": "cooccurrence",
+                        "weight": count,
+                        "color": "#ffd700",
+                        "lineStyle": "solid",
+                        "lastCooccurred": row["last_cooccurred"].isoformat() if row["last_cooccurred"] else None,
+                    }
+                }
+            )
+
+        nodes = [
+            {
+                "data": {
+                    "id": n.id,
+                    "label": n.label,
+                    "mentionCount": n.mention_count,
+                    "color": "#42a5f5" if n.mention_count > 1 else "#90caf9",
+                }
+            }
+            for n in nodes_by_id.values()
+        ]
+
+        return {
+            "nodes": nodes,
+            "edges": edges,
+            "total_entities": len(nodes),
+            "total_edges": len(edges),
+            "limit": limit,
+        }
+
     async def list_tags(
         self,
         bank_id: str,
@@ -6010,6 +6302,90 @@ class MemoryEngine(MemoryEngineInterface):
                 "pending_consolidation": consolidation_row["pending"] if consolidation_row else 0,
                 "total_observations": node_counts.get("observation", 0),
             }
+
+    async def get_memories_timeseries(
+        self,
+        bank_id: str,
+        *,
+        period: str,
+        request_context: "RequestContext",
+    ) -> dict[str, Any]:
+        """Memory ingestion bucketed by time, broken down by fact_type.
+
+        Always returns the full expected bucket set for the period so the
+        chart line is continuous (empty buckets show as zeros). Buckets are
+        anchored on UTC boundaries — we do this (rather than the PG session
+        timezone) so the API response is deterministic regardless of where
+        the database is deployed, and so the control-plane chart can match
+        buckets by ISO key on the client side.
+        """
+        await self._authenticate_tenant(request_context)
+        if self._operation_validator:
+            from hindsight_api.extensions import BankReadContext
+
+            ctx = BankReadContext(bank_id=bank_id, operation="get_memories_timeseries", request_context=request_context)
+            await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+
+        cfg = _MEMORIES_TIMESERIES_PERIODS.get(period) or _MEMORIES_TIMESERIES_PERIODS["7d"]
+        if period not in _MEMORIES_TIMESERIES_PERIODS:
+            period = "7d"
+
+        pool = await self._get_pool()
+        async with acquire_with_retry(pool) as conn:
+            rows = await conn.fetch(
+                f"""
+                SELECT date_trunc('{cfg.trunc}', created_at AT TIME ZONE 'UTC') AS bucket,
+                       fact_type, COUNT(*) AS count
+                FROM {fq_table("memory_units")}
+                WHERE bank_id = $1
+                  AND created_at >= now() - interval '{cfg.interval}'
+                GROUP BY bucket, fact_type
+                ORDER BY bucket
+                """,
+                bank_id,
+            )
+
+        # Build the canonical bucket list anchored on the most recent UTC boundary.
+        now_utc = datetime.utcnow()
+        if cfg.trunc == "minute":
+            end = now_utc.replace(second=0, microsecond=0)
+        elif cfg.trunc == "hour":
+            end = now_utc.replace(minute=0, second=0, microsecond=0)
+        else:
+            end = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
+
+        buckets: list[MemoryTimeseriesBucketData] = []
+        by_iso: dict[str, MemoryTimeseriesBucketData] = {}
+        for i in range(cfg.count):
+            t = end - cfg.step * (cfg.count - 1 - i)
+            entry = MemoryTimeseriesBucketData(time=t.isoformat())
+            buckets.append(entry)
+            by_iso[entry.time] = entry
+
+        for row in rows:
+            # asyncpg hands us a tz-aware datetime when the column is timestamptz.
+            # Normalize to the naive-UTC format we used for the dict keys.
+            bucket_dt = row["bucket"]
+            if bucket_dt.tzinfo is not None:
+                bucket_dt = bucket_dt.astimezone(timezone.utc).replace(tzinfo=None)
+            entry = by_iso.get(bucket_dt.isoformat())
+            if entry is None:
+                # Row fell outside the requested window (clock skew / edge case).
+                continue
+            ft = row["fact_type"]
+            if ft == "world":
+                entry.world += row["count"]
+            elif ft == "experience":
+                entry.experience += row["count"]
+            elif ft == "observation":
+                entry.observation += row["count"]
+
+        return {
+            "bank_id": bank_id,
+            "period": period,
+            "trunc": cfg.trunc,
+            "buckets": [b.as_dict() for b in buckets],
+        }
 
     async def get_entity(
         self,
@@ -6658,12 +7034,15 @@ class MemoryEngine(MemoryEngineInterface):
             fact_types = trigger_data.get("fact_types")
             exclude_mental_models = trigger_data.get("exclude_mental_models", False)
             stored_exclude_ids: list[str] = trigger_data.get("exclude_mental_model_ids") or []
+            recall_include_chunks_override = trigger_data.get("include_chunks")
+            recall_max_tokens_override = trigger_data.get("recall_max_tokens")
+            recall_chunks_max_tokens_override = trigger_data.get("recall_chunks_max_tokens")
 
             tag_filtering = _resolve_refresh_tag_filtering(mental_model.get("tags"), trigger_data)
 
             # Run reflect with the source query, excluding the mental model being refreshed
             # Skip creating a nested "hindsight.reflect" span since we already have "hindsight.mental_model_refresh"
-            reflect_result = await self.reflect_async(
+            reflect_kwargs: dict[str, Any] = dict(
                 bank_id=bank_id,
                 query=mental_model["source_query"],
                 request_context=request_context,
@@ -6673,8 +7052,17 @@ class MemoryEngine(MemoryEngineInterface):
                 fact_types=fact_types,
                 exclude_mental_models=exclude_mental_models,
                 exclude_mental_model_ids=list({*stored_exclude_ids, mental_model_id}),
+                recall_include_chunks=recall_include_chunks_override,
+                recall_max_tokens_override=recall_max_tokens_override,
+                recall_chunks_max_tokens_override=recall_chunks_max_tokens_override,
                 _skip_span=True,
             )
+            # Forward the per-model max_tokens so the final synthesis is capped at the
+            # user-configured limit rather than the reflect_async default.
+            stored_max_tokens = mental_model.get("max_tokens")
+            if stored_max_tokens is not None:
+                reflect_kwargs["max_tokens"] = stored_max_tokens
+            reflect_result = await self.reflect_async(**reflect_kwargs)
 
             # Build reflect_response payload to store
             # based_on contains MemoryFact objects for most types, but plain dicts for directives
@@ -7321,6 +7709,7 @@ class MemoryEngine(MemoryEngineInterface):
         operation_id: str,
         *,
         request_context: "RequestContext",
+        include_payload: bool = False,
     ) -> dict[str, Any]:
         """Get the status of a specific async operation.
 
@@ -7343,9 +7732,10 @@ class MemoryEngine(MemoryEngineInterface):
         op_uuid = uuid.UUID(operation_id)
 
         async with acquire_with_retry(pool) as conn:
+            payload_column = ", task_payload" if include_payload else ""
             row = await conn.fetchrow(
                 f"""
-                SELECT operation_id, operation_type, created_at, updated_at, completed_at, status, error_message, result_metadata
+                SELECT operation_id, operation_type, created_at, updated_at, completed_at, status, error_message, result_metadata{payload_column}
                 FROM {fq_table("async_operations")}
                 WHERE operation_id = $1 AND bank_id = $2
                 """,
@@ -7357,6 +7747,7 @@ class MemoryEngine(MemoryEngineInterface):
                 # Check if this is a parent operation
                 result_metadata = json.loads(row["result_metadata"]) if row["result_metadata"] else {}
                 is_parent = result_metadata.get("is_parent", False)
+                task_payload = json.loads(row["task_payload"]) if include_payload and row["task_payload"] else None
 
                 # Use status from database (parent status is updated when all children complete/fail)
                 db_status = row["status"]
@@ -7433,6 +7824,7 @@ class MemoryEngine(MemoryEngineInterface):
                         "error_message": row["error_message"],
                         "result_metadata": result_metadata,
                         "child_operations": child_statuses,
+                        "task_payload": task_payload,
                     }
                 else:
                     # Regular operation (not a parent)
@@ -7445,6 +7837,7 @@ class MemoryEngine(MemoryEngineInterface):
                         "completed_at": row["completed_at"].isoformat() if row["completed_at"] else None,
                         "error_message": row["error_message"],
                         "result_metadata": result_metadata,
+                        "task_payload": task_payload,
                     }
             else:
                 # Operation not found
@@ -7772,7 +8165,9 @@ class MemoryEngine(MemoryEngineInterface):
 
         # Ensure the bank row exists before inserting async_operations (which now has a FK).
         # Banks are created lazily on first retain, but the FK requires the row to exist first.
-        await bank_utils.get_bank_profile(pool, bank_id)
+        _, created = await bank_utils.get_or_create_bank_profile(pool, bank_id)
+        if created:
+            await self._apply_default_bank_template(bank_id, request_context)
 
         # Create typed metadata for parent operation
         parent_metadata = BatchRetainParentMetadata(
