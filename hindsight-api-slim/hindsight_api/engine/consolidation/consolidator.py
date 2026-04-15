@@ -1182,8 +1182,8 @@ async def _consolidate_batch_with_llm(
     # Use a constrained response model when observation limit is active
     response_model = _build_response_model(max_creates=remaining_observation_slots)
 
-    max_attempts = getattr(config, "consolidation_max_attempts", None) or 3
-    inner_max_retries = getattr(config, "consolidation_llm_max_retries", None)
+    max_attempts = config.consolidation_max_attempts if config is not None else 3
+    inner_max_retries = config.consolidation_llm_max_retries if config is not None else None
     last_exc: Exception | None = None
     for attempt in range(1, max_attempts + 1):
         try:

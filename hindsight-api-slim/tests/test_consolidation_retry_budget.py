@@ -34,7 +34,7 @@ class TestConsolidationRetryBudget:
         mock_llm_config.call.side_effect = RuntimeError("fail")
         result = await _consolidate_batch_with_llm(
             llm_config=mock_llm_config,
-            memories=[{"text": "test"}],
+            memories=[{"id": "m1", "text": "test"}],
             union_observations=[],
             union_source_facts={},
             config=None,
@@ -49,7 +49,7 @@ class TestConsolidationRetryBudget:
         mock_llm_config.call.side_effect = RuntimeError("fail")
         result = await _consolidate_batch_with_llm(
             llm_config=mock_llm_config,
-            memories=[{"text": "test"}],
+            memories=[{"id": "m1", "text": "test"}],
             union_observations=[],
             union_source_facts={},
             config=mock_config,
@@ -63,13 +63,12 @@ class TestConsolidationRetryBudget:
         mock_config.consolidation_llm_max_retries = 3
         await _consolidate_batch_with_llm(
             llm_config=mock_llm_config,
-            memories=[{"text": "test"}],
+            memories=[{"id": "m1", "text": "test"}],
             union_observations=[],
             union_source_facts={},
             config=mock_config,
         )
-        call_kwargs = mock_llm_config.call.call_args
-        assert call_kwargs.kwargs.get("max_retries") == 3 or call_kwargs[1].get("max_retries") == 3
+        assert mock_llm_config.call.call_args.kwargs.get("max_retries") == 3
 
     @pytest.mark.asyncio
     async def test_max_retries_not_passed_when_none(self, mock_llm_config, mock_config):
@@ -77,13 +76,12 @@ class TestConsolidationRetryBudget:
         mock_config.consolidation_llm_max_retries = None
         await _consolidate_batch_with_llm(
             llm_config=mock_llm_config,
-            memories=[{"text": "test"}],
+            memories=[{"id": "m1", "text": "test"}],
             union_observations=[],
             union_source_facts={},
             config=mock_config,
         )
-        call_kwargs = mock_llm_config.call.call_args
-        assert "max_retries" not in (call_kwargs.kwargs if call_kwargs.kwargs else {})
+        assert "max_retries" not in mock_llm_config.call.call_args.kwargs
 
     @pytest.mark.asyncio
     async def test_reduced_budget_limits_total_calls(self, mock_llm_config, mock_config):
@@ -93,7 +91,7 @@ class TestConsolidationRetryBudget:
         mock_llm_config.call.side_effect = RuntimeError("upstream 503")
         result = await _consolidate_batch_with_llm(
             llm_config=mock_llm_config,
-            memories=[{"text": "test"}],
+            memories=[{"id": "m1", "text": "test"}],
             union_observations=[],
             union_source_facts={},
             config=mock_config,
@@ -101,4 +99,4 @@ class TestConsolidationRetryBudget:
         assert result.failed
         assert mock_llm_config.call.call_count == 2
         for call_args in mock_llm_config.call.call_args_list:
-            assert call_args.kwargs.get("max_retries") == 2 or call_args[1].get("max_retries") == 2
+            assert call_args.kwargs.get("max_retries") == 2
