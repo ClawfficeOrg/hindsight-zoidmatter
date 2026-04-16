@@ -1,13 +1,15 @@
 """OpenAI Agents SDK tool definitions for Hindsight memory operations.
 
-Provides a factory function that creates OpenAI Agents SDK-compatible
-``FunctionTool`` instances backed by Hindsight's retain/recall/reflect APIs.
-These tools can be passed directly to ``Agent(tools=[...])``.
+Provides factory functions that create OpenAI Agents SDK-compatible
+``FunctionTool`` instances and dynamic instructions backed by Hindsight's
+retain/recall/reflect APIs. Tools can be passed directly to
+``Agent(tools=[...])`` and instructions to ``Agent(instructions=[...])``.
 """
 
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from agents import function_tool
@@ -167,7 +169,11 @@ def create_hindsight_tools(
                     return "No relevant memories found."
                 lines = []
                 for i, result in enumerate(response.results, 1):
-                    lines.append(f"{i}. {result.text}")
+                    line = f"{i}. {result.text}"
+                    if recall_include_entities and hasattr(result, "entities") and result.entities:
+                        entity_names = [e.name if hasattr(e, "name") else str(e) for e in result.entities]
+                        line += f" [entities: {', '.join(entity_names)}]"
+                    lines.append(line)
                 return "\n".join(lines)
             except HindsightError:
                 raise
@@ -197,14 +203,16 @@ def create_hindsight_tools(
                 }
                 if reflect_context:
                     reflect_kwargs["context"] = reflect_context
-                effective_reflect_max = reflect_max_tokens or effective_max_tokens
+                effective_reflect_max = reflect_max_tokens if reflect_max_tokens is not None else effective_max_tokens
                 if effective_reflect_max:
                     reflect_kwargs["max_tokens"] = effective_reflect_max
                 if reflect_response_schema:
                     reflect_kwargs["response_schema"] = reflect_response_schema
                 # Reflect tags: use reflect-specific or fall back to recall tags
                 effective_reflect_tags = reflect_tags if reflect_tags is not None else effective_recall_tags
-                effective_reflect_tags_match = reflect_tags_match or effective_recall_tags_match
+                effective_reflect_tags_match = (
+                    reflect_tags_match if reflect_tags_match is not None else effective_recall_tags_match
+                )
                 if effective_reflect_tags:
                     reflect_kwargs["tags"] = effective_reflect_tags
                     reflect_kwargs["tags_match"] = effective_reflect_tags_match
@@ -219,3 +227,95 @@ def create_hindsight_tools(
         tools.append(hindsight_reflect)
 
     return tools
+
+
+def memory_instructions(
+    *,
+    bank_id: str,
+    base_instructions: str = "",
+    client: Hindsight | None = None,
+    hindsight_api_url: str | None = None,
+    api_key: str | None = None,
+    query: str = "relevant context about the user",
+    budget: Budget | None = None,
+    max_results: int = 5,
+    max_tokens: int = 4096,
+    prefix: str = "\n\nRelevant memories:\n",
+    tags: list[str] | None = None,
+    tags_match: TagsMatch | None = None,
+) -> Callable[..., Awaitable[str]]:
+    """Create an instructions function that auto-injects relevant memories.
+
+    Returns an async callable compatible with the OpenAI Agents SDK's
+    ``Agent(instructions=...)`` parameter. On each agent run, it
+    automatically recalls relevant memories from Hindsight and appends
+    them to the base instructions — no explicit tool call needed.
+
+    The OpenAI Agents SDK accepts ``str | Callable | None`` for instructions
+    (not a list). This function returns a single callable that composes your
+    static instructions with dynamically recalled memories.
+
+    Args:
+        bank_id: The Hindsight memory bank to recall from.
+        base_instructions: Static instructions prepended before memories.
+        client: Pre-configured Hindsight client (preferred).
+        hindsight_api_url: API URL (used if no client provided).
+        api_key: API key (used if no client provided).
+        query: The recall query to find relevant memories.
+        budget: Recall budget level (low/mid/high).
+        max_results: Maximum number of memories to include.
+        max_tokens: Maximum tokens for recall results.
+        prefix: Text prepended before the memory list.
+        tags: Tags to filter when searching memories.
+        tags_match: Tag matching mode (any/all/any_strict/all_strict).
+
+    Returns:
+        An async callable suitable for ``Agent(instructions=...)``.
+
+    Example::
+
+        from hindsight_openai_agents import memory_instructions, create_hindsight_tools
+
+        agent = Agent(
+            name="assistant",
+            instructions=memory_instructions(
+                client=client,
+                bank_id="user-123",
+                base_instructions="You are a helpful assistant.",
+            ),
+            tools=create_hindsight_tools(client=client, bank_id="user-123"),
+        )
+    """
+    resolved_client = resolve_client(client, hindsight_api_url, api_key)
+
+    config = get_config()
+    effective_budget = budget if budget is not None else (config.budget if config else DEFAULT_BUDGET)
+    effective_tags = tags if tags is not None else (config.recall_tags if config else None)
+    effective_tags_match = (
+        tags_match if tags_match is not None else (config.recall_tags_match if config else DEFAULT_RECALL_TAGS_MATCH)
+    )
+
+    async def _instructions(ctx: Any, agent: Any) -> str:
+        """Recall memories and format as instructions text."""
+        try:
+            recall_kwargs: dict[str, Any] = {
+                "bank_id": bank_id,
+                "query": query,
+                "budget": effective_budget,
+                "max_tokens": max_tokens,
+            }
+            if effective_tags:
+                recall_kwargs["tags"] = effective_tags
+                recall_kwargs["tags_match"] = effective_tags_match
+            response = await resolved_client.arecall(**recall_kwargs)
+            if not response.results:
+                return base_instructions
+            lines = []
+            for i, result in enumerate(response.results[:max_results], 1):
+                lines.append(f"{i}. {result.text}")
+            return base_instructions + prefix + "\n".join(lines)
+        except Exception as e:
+            logger.error("memory_instructions recall failed: %s", e)
+            return base_instructions
+
+    return _instructions

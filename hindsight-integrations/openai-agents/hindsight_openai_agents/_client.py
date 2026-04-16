@@ -9,6 +9,9 @@ from hindsight_client import Hindsight
 from .config import get_config
 from .errors import HindsightError
 
+_VERSION = "0.1.0"
+_USER_AGENT = f"hindsight-openai-agents/{_VERSION}"
+
 
 def resolve_client(
     client: Hindsight | None,
@@ -28,7 +31,7 @@ def resolve_client(
             "No Hindsight API URL configured. Pass client= or hindsight_api_url=, or call configure() first."
         )
 
-    kwargs: dict[str, Any] = {"base_url": url, "timeout": 30.0}
+    kwargs: dict[str, Any] = {"base_url": url, "timeout": 30.0, "user_agent": _USER_AGENT}
     if key:
         kwargs["api_key"] = key
     return Hindsight(**kwargs)

@@ -7,6 +7,7 @@ import pytest
 from hindsight_openai_agents import (
     configure,
     create_hindsight_tools,
+    memory_instructions,
     reset_config,
 )
 from hindsight_openai_agents.errors import HindsightError
@@ -126,14 +127,18 @@ class TestCreateHindsightTools:
             mock_cls.return_value = _mock_client()
             tools = create_hindsight_tools(bank_id="test")
             assert len(tools) == 3
-            mock_cls.assert_called_once_with(base_url="http://localhost:8888", timeout=30.0)
+            mock_cls.assert_called_once_with(
+                base_url="http://localhost:8888", timeout=30.0, user_agent="hindsight-openai-agents/0.1.0"
+            )
 
     def test_explicit_url_overrides_config(self):
         configure(hindsight_api_url="http://config:8888")
         with patch("hindsight_openai_agents._client.Hindsight") as mock_cls:
             mock_cls.return_value = _mock_client()
             create_hindsight_tools(bank_id="test", hindsight_api_url="http://explicit:9999")
-            mock_cls.assert_called_once_with(base_url="http://explicit:9999", timeout=30.0)
+            mock_cls.assert_called_once_with(
+                base_url="http://explicit:9999", timeout=30.0, user_agent="hindsight-openai-agents/0.1.0"
+            )
 
 
 class TestRetainTool:
@@ -206,7 +211,6 @@ class TestRetainTool:
             include_recall=False,
             include_reflect=False,
         )
-        # OpenAI Agents SDK catches tool exceptions and returns them as error strings
         result = await _run(tools[0], {"content": "content"})
         assert "Retain failed" in result
 
@@ -313,7 +317,6 @@ class TestRecallTool:
             include_retain=False,
             include_reflect=False,
         )
-        # OpenAI Agents SDK catches tool exceptions and returns them as error strings
         result = await _run(tools[0], {"query": "query"})
         assert "Recall failed" in result
 
@@ -422,7 +425,6 @@ class TestReflectTool:
             include_retain=False,
             include_recall=False,
         )
-        # OpenAI Agents SDK catches tool exceptions and returns them as error strings
         result = await _run(tools[0], {"query": "query"})
         assert "Reflect failed" in result
 
@@ -488,3 +490,128 @@ class TestConfigFallback:
         await _run(tools[0], {"content": "content"})
         call_kwargs = client.aretain.call_args[1]
         assert call_kwargs["tags"] == ["env:test"]
+
+
+def _mock_recall_response_with_entities(texts_and_entities: list[tuple[str, list[str]]]):
+    """Create a mock recall response with entity data."""
+    response = MagicMock()
+    results = []
+    for text, entities in texts_and_entities:
+        r = MagicMock()
+        r.text = text
+        entity_objs = []
+        for name in entities:
+            e = MagicMock()
+            e.name = name
+            entity_objs.append(e)
+        r.entities = entity_objs
+        results.append(r)
+    response.results = results
+    return response
+
+
+class TestRecallEntities:
+    @pytest.mark.asyncio
+    async def test_recall_surfaces_entities_when_enabled(self):
+        client = _mock_client()
+        client.arecall.return_value = _mock_recall_response_with_entities([
+            ("User likes Python", ["Python", "User"]),
+            ("User is in NYC", ["NYC"]),
+        ])
+        tools = create_hindsight_tools(
+            bank_id="test",
+            client=client,
+            recall_include_entities=True,
+            include_retain=False,
+            include_reflect=False,
+        )
+        result = await _run(tools[0], {"query": "user preferences"})
+        assert "[entities: Python, User]" in result
+        assert "[entities: NYC]" in result
+
+    @pytest.mark.asyncio
+    async def test_recall_no_entities_when_disabled(self):
+        client = _mock_client()
+        client.arecall.return_value = _mock_recall_response(["User likes Python"])
+        tools = create_hindsight_tools(
+            bank_id="test",
+            client=client,
+            recall_include_entities=False,
+            include_retain=False,
+            include_reflect=False,
+        )
+        result = await _run(tools[0], {"query": "query"})
+        assert "[entities:" not in result
+
+
+class TestMemoryInstructions:
+    def setup_method(self):
+        reset_config()
+
+    def teardown_method(self):
+        reset_config()
+
+    @pytest.mark.asyncio
+    async def test_returns_formatted_memories(self):
+        client = _mock_client()
+        client.arecall.return_value = _mock_recall_response(["User likes Python", "User is in NYC"])
+        fn = memory_instructions(client=client, bank_id="test", base_instructions="You are helpful.")
+        result = await fn(MagicMock(), MagicMock())
+        assert result.startswith("You are helpful.")
+        assert "Relevant memories:" in result
+        assert "1. User likes Python" in result
+        assert "2. User is in NYC" in result
+
+    @pytest.mark.asyncio
+    async def test_returns_base_instructions_when_no_memories(self):
+        client = _mock_client()
+        client.arecall.return_value = _mock_recall_response([])
+        fn = memory_instructions(client=client, bank_id="test", base_instructions="You are helpful.")
+        result = await fn(MagicMock(), MagicMock())
+        assert result == "You are helpful."
+
+    @pytest.mark.asyncio
+    async def test_returns_base_instructions_on_error(self):
+        client = _mock_client()
+        client.arecall.side_effect = RuntimeError("connection refused")
+        fn = memory_instructions(client=client, bank_id="test", base_instructions="You are helpful.")
+        result = await fn(MagicMock(), MagicMock())
+        assert result == "You are helpful."
+
+    @pytest.mark.asyncio
+    async def test_respects_max_results(self):
+        client = _mock_client()
+        client.arecall.return_value = _mock_recall_response(["a", "b", "c", "d", "e"])
+        fn = memory_instructions(client=client, bank_id="test", max_results=3)
+        result = await fn(MagicMock(), MagicMock())
+        assert "3. c" in result
+        assert "4." not in result
+
+    @pytest.mark.asyncio
+    async def test_custom_prefix(self):
+        client = _mock_client()
+        client.arecall.return_value = _mock_recall_response(["fact"])
+        fn = memory_instructions(client=client, bank_id="test", prefix="\nKnown facts:\n")
+        result = await fn(MagicMock(), MagicMock())
+        assert "Known facts:\n" in result
+
+    @pytest.mark.asyncio
+    async def test_passes_tags_and_budget(self):
+        client = _mock_client()
+        client.arecall.return_value = _mock_recall_response(["fact"])
+        fn = memory_instructions(
+            client=client,
+            bank_id="test",
+            budget="low",
+            tags=["scope:user"],
+            tags_match="all",
+        )
+        await fn(MagicMock(), MagicMock())
+        call_kwargs = client.arecall.call_args[1]
+        assert call_kwargs["budget"] == "low"
+        assert call_kwargs["tags"] == ["scope:user"]
+        assert call_kwargs["tags_match"] == "all"
+
+    def test_raises_without_client_or_config(self):
+        with pytest.raises(HindsightError, match="No Hindsight API URL"):
+            memory_instructions(bank_id="test")
