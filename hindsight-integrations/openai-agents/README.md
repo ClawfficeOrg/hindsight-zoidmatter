@@ -163,6 +163,55 @@ tools = create_hindsight_tools(
 | `include_recall` | `True` | Include the recall (search) tool |
 | `include_reflect` | `True` | Include the reflect (synthesize) tool |
 
+## Production Patterns
+
+### Error Handling
+
+Tools surface errors to the agent as tool error results. The OpenAI Agents SDK catches exceptions from tools automatically and returns them as error strings, allowing the agent to handle failures gracefully:
+
+```python
+from hindsight_openai_agents.errors import HindsightError
+
+# The agent will see error messages and can decide how to proceed
+result = await Runner.run(agent, "What do you remember about me?")
+print(result.final_output)
+```
+
+### Bank Lifecycle
+
+Create banks before first use and clean up when done:
+
+```python
+async def main():
+    client = Hindsight(base_url="http://localhost:8888")
+
+    # Create bank (idempotent)
+    await client.acreate_bank(bank_id="user-123")
+
+    tools = create_hindsight_tools(client=client, bank_id="user-123")
+    # ... use tools ...
+
+    # Optional: delete bank when no longer needed
+    await client.adelete_bank(bank_id="user-123")
+```
+
+### Multi-Agent Workflows
+
+Give each agent its own memory bank, or share a bank across agents:
+
+```python
+# Per-agent memory
+researcher_tools = create_hindsight_tools(client=client, bank_id="researcher-memory")
+writer_tools = create_hindsight_tools(client=client, bank_id="writer-memory")
+
+# Shared memory across agents
+shared_tools = create_hindsight_tools(
+    client=client,
+    bank_id="team-shared",
+    tags=["team:content"],
+)
+```
+
 ## Requirements
 
 - Python >= 3.10
