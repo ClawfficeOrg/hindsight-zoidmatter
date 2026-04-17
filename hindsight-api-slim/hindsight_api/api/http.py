@@ -3630,7 +3630,7 @@ def _register_routes(app: FastAPI):
         body: CreateKnowledgeBaseRequest,
         request_context: RequestContext = Depends(get_request_context),
     ):
-        result = await engine.create_knowledge_base(
+        result = await app.state.memory.create_knowledge_base(
             bank_id,
             body.id,
             name=body.name,
@@ -3653,7 +3653,7 @@ def _register_routes(app: FastAPI):
         bank_id: str,
         request_context: RequestContext = Depends(get_request_context),
     ):
-        items = await engine.list_knowledge_bases(bank_id, request_context=request_context)
+        items = await app.state.memory.list_knowledge_bases(bank_id, request_context=request_context)
         return {"items": items}
 
     @app.get(
@@ -3668,7 +3668,7 @@ def _register_routes(app: FastAPI):
         kb_id: str,
         request_context: RequestContext = Depends(get_request_context),
     ):
-        result = await engine.get_knowledge_base(bank_id, kb_id, request_context=request_context)
+        result = await app.state.memory.get_knowledge_base(bank_id, kb_id, request_context=request_context)
         if result is None:
             raise HTTPException(status_code=404, detail=f"Knowledge base '{kb_id}' not found")
         return result
@@ -3686,7 +3686,7 @@ def _register_routes(app: FastAPI):
         body: UpdateKnowledgeBaseRequest,
         request_context: RequestContext = Depends(get_request_context),
     ):
-        result = await engine.update_knowledge_base(
+        result = await app.state.memory.update_knowledge_base(
             bank_id,
             kb_id,
             name=body.name,
@@ -3713,7 +3713,7 @@ def _register_routes(app: FastAPI):
         delete_mental_models: bool = Query(False, description="Also delete all mental models in this KB"),
         request_context: RequestContext = Depends(get_request_context),
     ):
-        deleted = await engine.delete_knowledge_base(
+        deleted = await app.state.memory.delete_knowledge_base(
             bank_id, kb_id, delete_mental_models=delete_mental_models, request_context=request_context
         )
         if not deleted:
