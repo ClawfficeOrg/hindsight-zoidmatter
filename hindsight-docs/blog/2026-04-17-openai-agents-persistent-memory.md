@@ -184,7 +184,7 @@ def create_agent_for_user(user_id: str) -> Agent:
     )
 ```
 
-Each bank is fully isolated — no cross-user data leakage. For more patterns, see the [per-user memory cookbook](/cookbook/per-user-memory).
+Each bank is fully isolated — no cross-user data leakage. For more patterns, see the [per-user memory cookbook](/cookbook/recipes/per-user-memory).
 
 ---
 
@@ -255,7 +255,7 @@ Same `bank_id` means shared memory. The triage agent gets the user's full contex
 
 **vs. raw vector stores (Pinecone, Weaviate, Chroma):** A vector store gives you embedding similarity search. Hindsight runs four parallel retrieval strategies (semantic, BM25, graph traversal, temporal) with cross-encoder reranking, plus entity resolution and a knowledge graph. It's a memory engine, not a database. See [benchmark results](/blog/2026/04/02/beam-sota).
 
-**vs. other framework integrations:** If you're using AutoGen, LlamaIndex, LangGraph, CrewAI, or Pydantic AI instead of OpenAI Agents SDK, Hindsight has [dedicated integrations](/sdks/integrations) for each.
+**vs. other framework integrations:** If you're using AutoGen, LlamaIndex, LangGraph, CrewAI, or Pydantic AI instead of OpenAI Agents SDK, Hindsight has dedicated integrations for each — see [AutoGen](/sdks/integrations/autogen), [LlamaIndex](/sdks/integrations/llamaindex), and [others](/sdks/integrations/crewai).
 
 ---
 
