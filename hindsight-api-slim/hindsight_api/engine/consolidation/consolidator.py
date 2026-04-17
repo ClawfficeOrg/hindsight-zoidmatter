@@ -762,16 +762,16 @@ async def _run_knowledge_base_updates(
         )
 
         try:
-            from hindsight_api.engine.llm_wrapper import call_llm
-
-            llm_response = await call_llm(
-                memory_engine._llm_config,
-                [{"role": "user", "content": prompt}],
-                max_tokens=1000,
+            llm_config = memory_engine._consolidation_llm_config
+            llm_response = await llm_config.call(
+                messages=[{"role": "user", "content": prompt}],
+                max_completion_tokens=1000,
                 temperature=0.2,
+                scope="knowledge_base_update",
+                skip_validation=True,
             )
 
-            response_text = llm_response.get("content", "").strip()
+            response_text = (llm_response if isinstance(llm_response, str) else str(llm_response)).strip()
             # Parse JSON from LLM response
             import re
 

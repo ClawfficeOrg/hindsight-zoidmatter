@@ -517,6 +517,71 @@ Dependencies: one LLM SDK (litellm or anthropic), nothing else. Git via subproce
 
 6. **What would Hindsight add on top?** After running the PoC, the gaps should be clear: semantic search at scale, reliable capture hooks, concurrent write safety, cross-agent sharing. These become the Hindsight product requirements with real evidence, not assumptions.
 
+## Current Approach: Knowledge Base with Direct CLI Reads
+
+After testing file-based memory (Option A), designing Option B, and evaluating Karpathy's LLM Wiki pattern, we converged on a Hindsight-native approach:
+
+### Architecture
+
+```
+[Agent conversation] → [auto-retain plugin hook] → [Hindsight bank]
+                                                         ↓
+                                              [consolidation (async)]
+                                                         ↓
+                                              [knowledge_base_update]
+                                              decides which MMs to create/reorganize
+                                                         ↓
+                                              [MM refresh (per-page)]
+                                              synthesizes page content from observations
+                                                         ↓
+[Agent reads via CLI] ← [mental-model list/get] ← [updated MMs in KB]
+```
+
+**Key design choices:**
+
+1. **Agent is read-only.** Never writes knowledge. The `agent-knowledge` skill tells the agent to call `hindsight mental-model list/get` via CLI to read its accumulated knowledge. No file writes, no git, no post-response checklist. The "agent forgot to write" problem is eliminated entirely.
+
+2. **Knowledge Base (KB) as first-class entity.** A named collection of MMs maintained by a shared mission/policy. The KB decides *structure* (which MMs exist); each MM's source_query decides *content*. Auto-creates new MMs when observations don't fit existing ones.
+
+3. **Direct CLI reads, not mounted files.** Initially we built `hindsight-mount` to dump MMs as files. Dropped it in favor of direct `hindsight mental-model get` calls — always live, no staleness, no sync problem. Mount survives as an optional tool for users who want a git-versioned snapshot.
+
+4. **Consolidation triggers KB update.** After consolidation produces new observations, the `knowledge_base_update` operation (step 4.5 in the pipeline) evaluates each KB: reads the mission + existing MMs + recent observations, asks the LLM whether new pages should be created, creates them with `refresh_after_consolidation=true`, then the existing MM refresh (step 5) populates content.
+
+5. **Auto-retain captures everything.** The openclaw plugin's `autoRetain` hook fires on every `agent_end`, capturing the full conversation. The agent doesn't decide what to retain — the infrastructure captures everything, and the consolidation pipeline decides what's worth synthesizing into the KB.
+
+### What's implemented
+
+| Component | Status |
+|---|---|
+| `knowledge_bases` table + `kb_id` on `mental_models` | ✅ Migration + engine CRUD |
+| 5 KB API endpoints (create/list/get/update/delete) | ✅ HTTP + Rust CLI |
+| `knowledge_base_update` in consolidation pipeline | ✅ Runs at step 4.5 |
+| `list_mental_models` with `?kb=<id>` filter | ✅ Engine + HTTP |
+| `agent-knowledge` skill (read-only, direct CLI) | ✅ Deployed to agent |
+| `hindsight-mount` (optional file dump) | ✅ Standalone script |
+| 16 tests (CRUD + relationships + pipeline) | ✅ Passing |
+
+### What's NOT yet implemented
+
+- **Observation routing with tags** — currently the KB update sees all observations in the bank, not just tagged ones. Tag-scoped routing would limit each KB to its own observation domain.
+- **`mental_model_ids` on recall results** — agent can't yet search "which MM covers this topic" via recall. Has to scan the MM list manually.
+- **Cross-KB sharing** — shared topics across agents (user voice, user timezone) require a cross-bank or shared-KB mechanism.
+- **Activity log extraction** — mechanical parsing of session transcripts for "what was delivered" isn't implemented. The KB currently only creates knowledge pages from observations, not activity summaries.
+
+### Comparison with earlier approaches
+
+| Concern | Option A (agent writes files) | Current (Hindsight KB + CLI reads) |
+|---|---|---|
+| Capture reliability | Agent forgets post-response writes | Auto-retain hook, deterministic |
+| Synthesis | Agent does it synchronously, blocking turn | Consolidation + KB update, async |
+| Read pattern | `cat ~/.agent-memory/topic.md` | `hindsight mental-model get <bank> <mm>` |
+| Staleness | File is always current (agent just wrote it) | MM reflects last consolidation (minutes latency) |
+| Scale | Index file breaks at ~100 files | Semantic search via recall |
+| Agent complexity | Read + write + git + checklist | Read only |
+| Infrastructure | Zero (just files) | Hindsight server + worker |
+
+The async latency (minutes between feedback and MM update) is the one trade-off. Within a session, the agent applies feedback from conversation context directly. Cross-session, the KB catches up.
+
 ## Open Questions
 
 1. **Can the agent self-correct with just a checklist?** The `📝 Memory` checklist helps but it's unclear if it's reliable over 100+ sessions. Needs longer testing.

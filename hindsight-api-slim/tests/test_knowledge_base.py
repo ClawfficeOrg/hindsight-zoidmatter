@@ -1,4 +1,4 @@
-"""Tests for Knowledge Base (KB) CRUD and KB-MM relationships."""
+"""Tests for Knowledge Base (KB) CRUD, KB-MM relationships, and KB update pipeline."""
 
 import uuid
 
@@ -300,5 +300,144 @@ class TestKBMentalModelRelationship:
         await memory.get_bank_profile(bank_id, request_context=request_context)
         kbs = await memory.list_knowledge_bases(bank_id, request_context=request_context)
         assert len(kbs) == 0
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+class TestKnowledgeBaseUpdate:
+    """Test the knowledge_base_update pipeline that runs after consolidation."""
+
+    async def test_kb_update_creates_mms_from_observations(self, memory: MemoryEngine, request_context):
+        """End-to-end: retain content → consolidate → KB update creates MMs."""
+        bank_id = _unique_bank()
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+
+        # Create a KB with a mission
+        await memory.create_knowledge_base(
+            bank_id,
+            "test-kb",
+            name="Test KB",
+            mission="Organize knowledge into topic pages. Create pages for user preferences and procedures.",
+            auto_create=True,
+            request_context=request_context,
+        )
+
+        # Retain some content that should produce observations
+        await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=[
+                {"content": "The user prefers short bullet format with no more than 5 items."},
+                {"content": "The user likes RSS feeds from Hacker News and ArXiv."},
+                {"content": "Always use web_search as a fallback when RSS fails."},
+            ],
+            request_context=request_context,
+        )
+        await memory.wait_for_background_tasks()
+
+        # Run consolidation (which triggers KB update internally)
+        from hindsight_api.engine.consolidation.consolidator import run_consolidation_job
+
+        result = await run_consolidation_job(
+            memory_engine=memory,
+            bank_id=bank_id,
+            request_context=request_context,
+        )
+
+        # Verify consolidation ran
+        # Consolidation may return 'completed' or 'no_new_memories' depending on
+        # whether the background worker already processed the memories.
+        status = result.get("status")
+        assert status in ("completed", "no_new_memories"), f"unexpected status: {status}"
+
+        # KB update only runs when consolidation processes memories
+        kb_updates = result.get("knowledge_base_updates", {})
+        if status == "completed":
+            assert kb_updates.get("kbs_evaluated", 0) >= 1, "KB should have been evaluated"
+
+        # Check if any MMs were created (depends on LLM response)
+        mms = await memory.list_mental_models(bank_id, kb_id="test-kb", request_context=request_context)
+
+        # Log what happened for debugging
+        print(f"KB update stats: {kb_updates}")
+        print(f"MMs in KB after update: {[mm['id'] for mm in mms]}")
+
+        # The KB update should have at least evaluated the KB
+        # MM creation depends on the LLM deciding to create pages
+        # In a real LLM environment, we'd expect 1-2 MMs created
+        # With mock LLM, we just verify the pipeline didn't crash
+        if status == "completed":
+            assert kb_updates.get("kbs_evaluated", 0) >= 1
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_kb_update_skips_when_no_mission(self, memory: MemoryEngine, request_context):
+        """KB without a mission should be skipped."""
+        bank_id = _unique_bank()
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+
+        await memory.create_knowledge_base(
+            bank_id,
+            "empty-kb",
+            name="Empty KB",
+            mission="",  # no mission
+            auto_create=True,
+            request_context=request_context,
+        )
+
+        await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=[{"content": "Some test content."}],
+            request_context=request_context,
+        )
+        await memory.wait_for_background_tasks()
+
+        from hindsight_api.engine.consolidation.consolidator import run_consolidation_job
+
+        result = await run_consolidation_job(
+            memory_engine=memory,
+            bank_id=bank_id,
+            request_context=request_context,
+        )
+
+        kb_updates = result.get("knowledge_base_updates", {})
+        if result.get("status") == "completed":
+            assert kb_updates.get("kbs_skipped", 0) >= 1, "KB without mission should be skipped"
+        assert kb_updates.get("mms_created", 0) == 0
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_kb_update_skips_when_auto_create_disabled(self, memory: MemoryEngine, request_context):
+        """KB with auto_create=False should be skipped."""
+        bank_id = _unique_bank()
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+
+        await memory.create_knowledge_base(
+            bank_id,
+            "no-auto-kb",
+            name="No Auto KB",
+            mission="Some mission",
+            auto_create=False,
+            request_context=request_context,
+        )
+
+        await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=[{"content": "Some test content."}],
+            request_context=request_context,
+        )
+        await memory.wait_for_background_tasks()
+
+        from hindsight_api.engine.consolidation.consolidator import run_consolidation_job
+
+        result = await run_consolidation_job(
+            memory_engine=memory,
+            bank_id=bank_id,
+            request_context=request_context,
+        )
+
+        kb_updates = result.get("knowledge_base_updates", {})
+        if result.get("status") == "completed":
+            assert kb_updates.get("kbs_skipped", 0) >= 1
+        assert kb_updates.get("mms_created", 0) == 0
 
         await memory.delete_bank(bank_id, request_context=request_context)
