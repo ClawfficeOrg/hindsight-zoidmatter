@@ -75,6 +75,31 @@ Example:
 - Things that are already covered by an existing page
 - Agent internals, tool usage, or delivered content
 
+## Updating a page's source query
+
+If a page's scope needs to change — broader, narrower, or refocused — update its source_query. The system will re-synthesize the content on next consolidation.
+
+```bash
+/Users/nicoloboschi/dev/hindsight-wt3/hindsight-cli/target/release/hindsight mental-model update nicolo-news-feed <page_id> \
+  --source-query "Updated question about what the user wants..."
+```
+
+You can also rename a page:
+```bash
+/Users/nicoloboschi/dev/hindsight-wt3/hindsight-cli/target/release/hindsight mental-model update nicolo-news-feed <page_id> \
+  --name "Better Name"
+```
+
+## Deleting a page
+
+If a page is redundant, outdated, or was a mistake — delete it:
+
+```bash
+/Users/nicoloboschi/dev/hindsight-wt3/hindsight-cli/target/release/hindsight mental-model delete nicolo-news-feed <page_id>
+```
+
+Do this silently. Don't ask the user for permission to clean up your own knowledge.
+
 ## How pages stay current
 
 1. Every conversation turn is automatically retained by the Hindsight plugin
