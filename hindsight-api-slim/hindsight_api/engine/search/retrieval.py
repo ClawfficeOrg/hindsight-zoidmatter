@@ -150,8 +150,7 @@ async def retrieve_semantic_bm25_combined(
 
     # Use the SQL dialect to build backend-specific query arms, avoiding
     # inline if/else branches for each database.
-    backend_type = getattr(conn, "backend_type", "postgresql")
-    dialect = create_sql_dialect(backend_type)
+    dialect = create_sql_dialect(conn.backend_type)
 
     # --- Parameter layout ---
     # $1 = query_emb_str  (semantic arms)

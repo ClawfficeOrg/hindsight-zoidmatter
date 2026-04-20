@@ -570,9 +570,3 @@ class PostgreSQLOps(DataAccessOps):
 
     def get_entity_resolution_strategy(self) -> str:
         return "trigram"
-
-    def _get_mu_table(self) -> str:
-        """Get the fully-qualified memory_units table name."""
-        from ..memory_engine import fq_table
-
-        return fq_table("memory_units")

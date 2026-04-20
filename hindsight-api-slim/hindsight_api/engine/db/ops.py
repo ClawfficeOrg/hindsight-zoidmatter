@@ -309,3 +309,11 @@ class DataAccessOps(ABC):
         Non-PG uses "oracle_fuzzy" (UTL_MATCH) or falls back to "full".
         """
         ...
+
+    # -- Shared helpers (concrete) -----------------------------------------
+
+    def _get_mu_table(self) -> str:
+        """Get the fully-qualified memory_units table name."""
+        from ..schema import fq_table
+
+        return fq_table("memory_units")

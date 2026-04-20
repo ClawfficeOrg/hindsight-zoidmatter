@@ -11,6 +11,9 @@ from .base import SQLDialect
 class OracleDialect(SQLDialect):
     """SQL dialect for Oracle 23ai (python-oracledb)."""
 
+    # Characters that need escaping in Oracle Text CONTAINS queries.
+    _ORACLE_TEXT_SPECIAL = frozenset("&|!{}()[]~*?%-$>")
+
     # -- Parameter binding -----------------------------------------------
 
     def param(self, n: int) -> str:
@@ -256,7 +259,6 @@ class OracleDialect(SQLDialect):
         *,
         text_search_extension: str = "native",
     ) -> str:
-        # Oracle Text: escape special chars and join with OR.
-        _oracle_special = set("&|!{}()[]~*?%-$>")
-        safe_tokens = [t for t in tokens if not any(c in _oracle_special for c in t)]
+        # Oracle Text: filter tokens with special chars and join with OR.
+        safe_tokens = [t for t in tokens if not any(c in self._ORACLE_TEXT_SPECIAL for c in t)]
         return " OR ".join(safe_tokens) if safe_tokens else tokens[0]
