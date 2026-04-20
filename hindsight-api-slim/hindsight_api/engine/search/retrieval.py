@@ -150,7 +150,9 @@ async def retrieve_semantic_bm25_combined(
 
     # Use the SQL dialect to build backend-specific query arms, avoiding
     # inline if/else branches for each database.
-    dialect = create_sql_dialect(conn.backend_type)
+    # Use getattr for backward compat: raw asyncpg connections (used in some
+    # tests) lack backend_type; default to "postgresql".
+    dialect = create_sql_dialect(getattr(conn, "backend_type", "postgresql"))
 
     # --- Parameter layout ---
     # $1 = query_emb_str  (semantic arms)

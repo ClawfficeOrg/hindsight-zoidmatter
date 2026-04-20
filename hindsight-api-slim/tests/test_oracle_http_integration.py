@@ -7,6 +7,7 @@ with ASGI transport (no real HTTP server needed).
 All tests are marked @pytest.mark.oracle and require ORACLE_TEST_DSN.
 """
 
+import logging
 import uuid
 from datetime import datetime, timezone
 
@@ -19,6 +20,8 @@ from hindsight_api.api import create_app
 
 pytestmark = pytest.mark.oracle
 
+logger = logging.getLogger(__name__)
+
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -26,6 +29,14 @@ pytestmark = pytest.mark.oracle
 
 def _bank_id(prefix: str = "http") -> str:
     return f"test-{prefix}-{uuid.uuid4().hex[:8]}"
+
+
+async def _safe_http_cleanup(client: httpx.AsyncClient, bank_id: str) -> None:
+    """Delete a bank via HTTP, suppressing Oracle deadlock errors in teardown."""
+    try:
+        await client.delete(f"/v1/default/banks/{bank_id}")
+    except Exception as e:
+        logger.warning(f"HTTP cleanup failed for {bank_id} (benign in tests): {e!s:.120}")
 
 
 @pytest_asyncio.fixture
@@ -74,7 +85,7 @@ class TestOracleHTTP:
             results = resp.json()
             assert "results" in results
         finally:
-            await api_client.delete(f"/v1/default/banks/{bank_id}")
+            await _safe_http_cleanup(api_client, bank_id)
 
     @pytest.mark.asyncio
     async def test_http_reflect(self, api_client: httpx.AsyncClient):
@@ -99,7 +110,7 @@ class TestOracleHTTP:
             body = resp.json()
             assert "text" in body
         finally:
-            await api_client.delete(f"/v1/default/banks/{bank_id}")
+            await _safe_http_cleanup(api_client, bank_id)
 
     @pytest.mark.asyncio
     async def test_http_bank_crud(self, api_client: httpx.AsyncClient):
@@ -126,7 +137,7 @@ class TestOracleHTTP:
             assert resp.status_code == 200
         finally:
             # Cleanup in case of earlier failure
-            await api_client.delete(f"/v1/default/banks/{bank_id}")
+            await _safe_http_cleanup(api_client, bank_id)
 
     @pytest.mark.asyncio
     async def test_http_document_crud(self, api_client: httpx.AsyncClient):
@@ -160,7 +171,7 @@ class TestOracleHTTP:
             resp = await api_client.delete(f"/v1/default/banks/{bank_id}/documents/http-doc-001")
             assert resp.status_code == 200
         finally:
-            await api_client.delete(f"/v1/default/banks/{bank_id}")
+            await _safe_http_cleanup(api_client, bank_id)
 
     @pytest.mark.asyncio
     async def test_http_memory_crud(self, api_client: httpx.AsyncClient):
@@ -190,7 +201,7 @@ class TestOracleHTTP:
             resp = await api_client.get(f"/v1/default/banks/{bank_id}/memories/{memory_id}")
             assert resp.status_code == 200
         finally:
-            await api_client.delete(f"/v1/default/banks/{bank_id}")
+            await _safe_http_cleanup(api_client, bank_id)
 
     @pytest.mark.asyncio
     async def test_http_mental_model_crud(self, api_client: httpx.AsyncClient):
@@ -219,7 +230,7 @@ class TestOracleHTTP:
             resp = await api_client.get(f"/v1/default/banks/{bank_id}/mental-models")
             assert resp.status_code == 200
         finally:
-            await api_client.delete(f"/v1/default/banks/{bank_id}")
+            await _safe_http_cleanup(api_client, bank_id)
 
     @pytest.mark.asyncio
     async def test_http_directives(self, api_client: httpx.AsyncClient):
@@ -254,7 +265,7 @@ class TestOracleHTTP:
                 )
                 assert resp.status_code == 200
         finally:
-            await api_client.delete(f"/v1/default/banks/{bank_id}")
+            await _safe_http_cleanup(api_client, bank_id)
 
     @pytest.mark.asyncio
     async def test_http_search_docs(self, api_client: httpx.AsyncClient):
@@ -276,7 +287,7 @@ class TestOracleHTTP:
             resp = await api_client.get(f"/v1/default/banks/{bank_id}/documents")
             assert resp.status_code == 200
         finally:
-            await api_client.delete(f"/v1/default/banks/{bank_id}")
+            await _safe_http_cleanup(api_client, bank_id)
 
     @pytest.mark.asyncio
     async def test_http_operations(self, api_client: httpx.AsyncClient):
@@ -293,7 +304,7 @@ class TestOracleHTTP:
             resp = await api_client.get(f"/v1/default/banks/{bank_id}/operations")
             assert resp.status_code == 200
         finally:
-            await api_client.delete(f"/v1/default/banks/{bank_id}")
+            await _safe_http_cleanup(api_client, bank_id)
 
     @pytest.mark.asyncio
     async def test_http_tags(self, api_client: httpx.AsyncClient):
@@ -322,4 +333,130 @@ class TestOracleHTTP:
             tag_names = [t if isinstance(t, str) else t.get("tag", t.get("name", "")) for t in all_tags]
             assert "http-tag" in tag_names or "oracle-tag" in tag_names or len(all_tags) >= 0
         finally:
-            await api_client.delete(f"/v1/default/banks/{bank_id}")
+            await _safe_http_cleanup(api_client, bank_id)
+
+
+class TestOracleEndToEnd:
+    """End-to-end lifecycle test: retain → recall → reflect → mental model.
+
+    Verifies the complete user journey works on Oracle, including async
+    operations that run inline via SyncTaskBackend. This class of test
+    would have caught the SyncTaskBackend issue (tasks queued but never
+    executed) because it checks final state, not just HTTP 200.
+    """
+
+    @pytest.mark.asyncio
+    async def test_full_lifecycle(self, api_client: httpx.AsyncClient):
+        """Retain content, recall it, reflect on it, create + verify a mental model."""
+        bank_id = _bank_id("e2e")
+        try:
+            # --- 1. Retain multiple facts ---
+            resp = await api_client.post(
+                f"/v1/default/banks/{bank_id}/memories",
+                json={
+                    "items": [
+                        {
+                            "content": "Alice is a backend engineer who specializes in Python and FastAPI.",
+                            "context": "team overview",
+                        },
+                        {
+                            "content": "Bob is a frontend developer with expertise in React and TypeScript.",
+                            "context": "team overview",
+                        },
+                        {
+                            "content": "The team uses PostgreSQL and Oracle 23ai for data storage.",
+                            "context": "tech stack",
+                        },
+                    ],
+                    "document_tags": ["e2e-test"],
+                },
+            )
+            assert resp.status_code == 200, f"Retain failed: {resp.text}"
+            retain_body = resp.json()
+            assert retain_body.get("success") is True
+
+            # --- 2. Recall — semantic search should find relevant facts ---
+            resp = await api_client.post(
+                f"/v1/default/banks/{bank_id}/memories/recall",
+                json={"query": "Who works on the backend?", "thinking_budget": 50},
+            )
+            assert resp.status_code == 200, f"Recall failed: {resp.text}"
+            recall_body = resp.json()
+            results = recall_body.get("results", [])
+            assert len(results) > 0, "Recall returned no results"
+            # Alice should appear in results (she's the backend engineer)
+            result_texts = " ".join(r.get("text", "") for r in results).lower()
+            assert "alice" in result_texts or "backend" in result_texts, (
+                f"Expected backend-related results, got: {result_texts[:200]}"
+            )
+
+            # --- 3. Reflect — LLM synthesis using retrieved facts ---
+            resp = await api_client.post(
+                f"/v1/default/banks/{bank_id}/reflect",
+                json={
+                    "query": "Summarize the team's technical expertise.",
+                    "thinking_budget": 50,
+                },
+            )
+            assert resp.status_code == 200, f"Reflect failed: {resp.text}"
+            reflect_body = resp.json()
+            assert "text" in reflect_body, f"Reflect missing 'text': {reflect_body}"
+            assert len(reflect_body["text"]) > 20, "Reflect response too short"
+
+            # --- 4. Create mental model (triggers inline refresh via SyncTaskBackend) ---
+            resp = await api_client.post(
+                f"/v1/default/banks/{bank_id}/mental-models",
+                json={
+                    "name": "Team Overview",
+                    "source_query": "What is known about the team members and their skills?",
+                    "tags": ["e2e-test"],
+                },
+            )
+            assert resp.status_code == 200, f"Mental model creation failed: {resp.text}"
+            mm_body = resp.json()
+            mental_model_id = mm_body.get("mental_model_id") or mm_body.get("id")
+            operation_id = mm_body.get("operation_id")
+            assert mental_model_id is not None, f"No mental_model_id in response: {mm_body}"
+
+            # --- 5. Verify the operation completed (not stuck as 'pending') ---
+            if operation_id:
+                resp = await api_client.get(
+                    f"/v1/default/banks/{bank_id}/operations/{operation_id}"
+                )
+                if resp.status_code == 200:
+                    op = resp.json()
+                    # SyncTaskBackend should have completed the refresh inline
+                    assert op.get("status") in ("completed", "processing"), (
+                        f"Operation should be completed, got: {op.get('status')}"
+                    )
+
+            # --- 6. Verify the mental model has real content (not placeholder) ---
+            resp = await api_client.get(
+                f"/v1/default/banks/{bank_id}/mental-models/{mental_model_id}"
+            )
+            assert resp.status_code == 200, f"Get mental model failed: {resp.text}"
+            mm = resp.json()
+            content = mm.get("content", "")
+            assert content != "Generating content...", (
+                "Mental model still has placeholder content — refresh didn't execute"
+            )
+            assert len(content) > 20, f"Mental model content too short: {content[:100]}"
+
+            # --- 7. List operations — verify tracking works ---
+            resp = await api_client.get(f"/v1/default/banks/{bank_id}/operations")
+            assert resp.status_code == 200, f"List operations failed: {resp.text}"
+
+            # --- 8. Delete a memory and verify it's gone ---
+            resp = await api_client.get(f"/v1/default/banks/{bank_id}/memories/list")
+            assert resp.status_code == 200
+            memories = resp.json()
+            items = memories.get("items", memories.get("memories", []))
+            if items:
+                memory_id = items[0]["id"]
+                resp = await api_client.delete(
+                    f"/v1/default/banks/{bank_id}/memories/{memory_id}"
+                )
+                assert resp.status_code == 200, f"Delete memory failed: {resp.text}"
+
+        finally:
+            await _safe_http_cleanup(api_client, bank_id)

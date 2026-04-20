@@ -459,7 +459,10 @@ def _rewrite_pg_to_oracle(query: str) -> RewriteResult:
             logger.warning("ON CONFLICT DO UPDATE rewrite failed — query may not work: %s", query[:200])
 
     # RETURNING clause → rewrite to RETURNING ... INTO :ret_0, :ret_1, ...
-    if not ignore_dup:
+    # Only applies to DML (INSERT/UPDATE/DELETE) — SELECT queries should never
+    # have RETURNING rewritten, even if they contain the word in a string literal
+    # or CTE alias.
+    if not ignore_dup and re.match(r"\s*(INSERT|UPDATE|DELETE)\b", query, re.IGNORECASE):
         m = _RETURNING_RE.search(query)
         if m:
             ret_cols_str = m.group(1).strip()

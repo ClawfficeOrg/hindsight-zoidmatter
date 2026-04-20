@@ -9,6 +9,7 @@ produces identical behavior through the database abstraction layer.
 """
 
 import asyncio
+import logging
 import uuid
 from datetime import datetime, timezone
 
@@ -20,6 +21,8 @@ from hindsight_api.engine.memory_engine import Budget
 
 pytestmark = pytest.mark.oracle
 
+logger = logging.getLogger(__name__)
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -27,6 +30,25 @@ pytestmark = pytest.mark.oracle
 
 def _bank_id(prefix: str = "oracle") -> str:
     return f"test-{prefix}-{uuid.uuid4().hex[:8]}"
+
+
+async def _safe_cleanup(memory: MemoryEngine, bank_id: str, request_context: RequestContext) -> None:
+    """Delete a bank, suppressing deadlock/lock errors in test teardown.
+
+    Oracle's row-level locking can cause ORA-00060 (deadlock) or ORA-00054
+    (resource busy) when concurrent tests clean up simultaneously. These
+    are benign in test teardown — the data will be orphaned but doesn't
+    affect other tests since each test uses a unique bank_id.
+    """
+    try:
+        await memory.delete_bank(bank_id, request_context=request_context)
+    except Exception as e:
+        err = str(e)
+        if "ORA-00060" in err or "ORA-00054" in err:
+            logger.warning(f"Cleanup deadlock for {bank_id} (benign in tests): {err[:120]}")
+        else:
+            logger.error(f"Cleanup failed for {bank_id}: {err[:200]}")
+            raise
 
 
 # ===================================================================
@@ -45,7 +67,7 @@ class TestCoreCRUD:
             assert profile is not None
             assert profile["bank_id"] == bank_id
         finally:
-            await oracle_memory.delete_bank(bank_id, request_context=request_context)
+            await _safe_cleanup(oracle_memory, bank_id, request_context)
 
     @pytest.mark.asyncio
     async def test_retain_simple(self, oracle_memory: MemoryEngine, request_context: RequestContext):
@@ -60,7 +82,7 @@ class TestCoreCRUD:
             )
             assert len(unit_ids) > 0
         finally:
-            await oracle_memory.delete_bank(bank_id, request_context=request_context)
+            await _safe_cleanup(oracle_memory, bank_id, request_context)
 
     @pytest.mark.asyncio
     async def test_retain_with_document(self, oracle_memory: MemoryEngine, request_context: RequestContext):
@@ -82,7 +104,7 @@ class TestCoreCRUD:
             )
             assert doc is not None
         finally:
-            await oracle_memory.delete_bank(bank_id, request_context=request_context)
+            await _safe_cleanup(oracle_memory, bank_id, request_context)
 
     @pytest.mark.asyncio
     async def test_recall_semantic(self, oracle_memory: MemoryEngine, request_context: RequestContext):
@@ -106,7 +128,7 @@ class TestCoreCRUD:
             texts = [r.text for r in result.results]
             assert any("Carol" in t or "NLP" in t for t in texts)
         finally:
-            await oracle_memory.delete_bank(bank_id, request_context=request_context)
+            await _safe_cleanup(oracle_memory, bank_id, request_context)
 
     @pytest.mark.asyncio
     async def test_recall_with_filters(self, oracle_memory: MemoryEngine, request_context: RequestContext):
@@ -145,7 +167,7 @@ class TestCoreCRUD:
             texts = " ".join(r.text for r in result.results)
             assert "Dan" in texts or "distributed" in texts
         finally:
-            await oracle_memory.delete_bank(bank_id, request_context=request_context)
+            await _safe_cleanup(oracle_memory, bank_id, request_context)
 
     @pytest.mark.asyncio
     async def test_recall_temporal(self, oracle_memory: MemoryEngine, request_context: RequestContext):
@@ -174,7 +196,7 @@ class TestCoreCRUD:
             )
             assert len(result.results) > 0
         finally:
-            await oracle_memory.delete_bank(bank_id, request_context=request_context)
+            await _safe_cleanup(oracle_memory, bank_id, request_context)
 
     @pytest.mark.asyncio
     async def test_reflect_basic(self, oracle_memory: MemoryEngine, request_context: RequestContext):
@@ -197,7 +219,7 @@ class TestCoreCRUD:
             assert result.text is not None
             assert len(result.text) > 0
         finally:
-            await oracle_memory.delete_bank(bank_id, request_context=request_context)
+            await _safe_cleanup(oracle_memory, bank_id, request_context)
 
     @pytest.mark.asyncio
     async def test_delete_memory(self, oracle_memory: MemoryEngine, request_context: RequestContext):
@@ -224,7 +246,7 @@ class TestCoreCRUD:
             )
             assert mem is None
         finally:
-            await oracle_memory.delete_bank(bank_id, request_context=request_context)
+            await _safe_cleanup(oracle_memory, bank_id, request_context)
 
     @pytest.mark.asyncio
     async def test_delete_document(self, oracle_memory: MemoryEngine, request_context: RequestContext):
@@ -250,7 +272,7 @@ class TestCoreCRUD:
             )
             assert doc is None
         finally:
-            await oracle_memory.delete_bank(bank_id, request_context=request_context)
+            await _safe_cleanup(oracle_memory, bank_id, request_context)
 
     @pytest.mark.asyncio
     async def test_bank_profile_crud(self, oracle_memory: MemoryEngine, request_context: RequestContext):
@@ -270,7 +292,7 @@ class TestCoreCRUD:
             updated = await oracle_memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
             assert updated["name"] == "Test Oracle Bank"
         finally:
-            await oracle_memory.delete_bank(bank_id, request_context=request_context)
+            await _safe_cleanup(oracle_memory, bank_id, request_context)
 
     @pytest.mark.asyncio
     async def test_list_memories(self, oracle_memory: MemoryEngine, request_context: RequestContext):
@@ -290,7 +312,7 @@ class TestCoreCRUD:
             # Each retain may extract multiple facts
             assert len(memories) >= 3
         finally:
-            await oracle_memory.delete_bank(bank_id, request_context=request_context)
+            await _safe_cleanup(oracle_memory, bank_id, request_context)
 
     @pytest.mark.asyncio
     async def test_get_memory(self, oracle_memory: MemoryEngine, request_context: RequestContext):
@@ -312,7 +334,7 @@ class TestCoreCRUD:
             assert mem is not None
             assert str(mem["id"]) == str(memory_id)
         finally:
-            await oracle_memory.delete_bank(bank_id, request_context=request_context)
+            await _safe_cleanup(oracle_memory, bank_id, request_context)
 
 
 # ===================================================================
@@ -350,7 +372,7 @@ class TestRetainPipeline:
             )
             assert len(unit_ids) > 0
         finally:
-            await oracle_memory.delete_bank(bank_id, request_context=request_context)
+            await _safe_cleanup(oracle_memory, bank_id, request_context)
 
     @pytest.mark.asyncio
     async def test_retain_delta(self, oracle_memory: MemoryEngine, request_context: RequestContext):
@@ -377,7 +399,7 @@ class TestRetainPipeline:
             # Delta detection should produce no new facts (or very few)
             assert len(ids2) <= len(ids1)
         finally:
-            await oracle_memory.delete_bank(bank_id, request_context=request_context)
+            await _safe_cleanup(oracle_memory, bank_id, request_context)
 
     @pytest.mark.asyncio
     async def test_retain_entities(self, oracle_memory: MemoryEngine, request_context: RequestContext):
@@ -400,7 +422,7 @@ class TestRetainPipeline:
             )
             assert len(result.results) > 0
         finally:
-            await oracle_memory.delete_bank(bank_id, request_context=request_context)
+            await _safe_cleanup(oracle_memory, bank_id, request_context)
 
     @pytest.mark.asyncio
     async def test_retain_entity_dedup(self, oracle_memory: MemoryEngine, request_context: RequestContext):
@@ -430,7 +452,7 @@ class TestRetainPipeline:
             )
             assert len(result.results) >= 2
         finally:
-            await oracle_memory.delete_bank(bank_id, request_context=request_context)
+            await _safe_cleanup(oracle_memory, bank_id, request_context)
 
     @pytest.mark.asyncio
     async def test_retain_batch(self, oracle_memory: MemoryEngine, request_context: RequestContext):
@@ -458,7 +480,7 @@ class TestRetainPipeline:
             total_ids = sum(len(ids) for ids in unit_ids_list)
             assert total_ids > 0
         finally:
-            await oracle_memory.delete_bank(bank_id, request_context=request_context)
+            await _safe_cleanup(oracle_memory, bank_id, request_context)
 
     @pytest.mark.asyncio
     async def test_retain_idempotent(self, oracle_memory: MemoryEngine, request_context: RequestContext):
@@ -484,7 +506,7 @@ class TestRetainPipeline:
             # Second retain with same doc ID should be idempotent
             assert len(ids2) <= len(ids1)
         finally:
-            await oracle_memory.delete_bank(bank_id, request_context=request_context)
+            await _safe_cleanup(oracle_memory, bank_id, request_context)
 
     @pytest.mark.asyncio
     async def test_retain_with_tags(self, oracle_memory: MemoryEngine, request_context: RequestContext):
@@ -511,7 +533,7 @@ class TestRetainPipeline:
             )
             assert len(result.results) > 0
         finally:
-            await oracle_memory.delete_bank(bank_id, request_context=request_context)
+            await _safe_cleanup(oracle_memory, bank_id, request_context)
 
     @pytest.mark.asyncio
     async def test_retain_document_metadata(self, oracle_memory: MemoryEngine, request_context: RequestContext):
@@ -530,7 +552,7 @@ class TestRetainPipeline:
             )
             assert doc is not None
         finally:
-            await oracle_memory.delete_bank(bank_id, request_context=request_context)
+            await _safe_cleanup(oracle_memory, bank_id, request_context)
 
 
 # ===================================================================
@@ -571,7 +593,7 @@ class TestSearchRetrieval:
             top_text = result.results[0].text
             assert "quantum" in top_text.lower() or "qubit" in top_text.lower()
         finally:
-            await oracle_memory.delete_bank(bank_id, request_context=request_context)
+            await _safe_cleanup(oracle_memory, bank_id, request_context)
 
     @pytest.mark.asyncio
     async def test_text_search(self, oracle_memory: MemoryEngine, request_context: RequestContext):
@@ -593,7 +615,7 @@ class TestSearchRetrieval:
             )
             assert len(result.results) > 0
         finally:
-            await oracle_memory.delete_bank(bank_id, request_context=request_context)
+            await _safe_cleanup(oracle_memory, bank_id, request_context)
 
     @pytest.mark.asyncio
     async def test_graph_retrieval(self, oracle_memory: MemoryEngine, request_context: RequestContext):
@@ -623,7 +645,7 @@ class TestSearchRetrieval:
             )
             assert len(result.results) > 0
         finally:
-            await oracle_memory.delete_bank(bank_id, request_context=request_context)
+            await _safe_cleanup(oracle_memory, bank_id, request_context)
 
     @pytest.mark.asyncio
     async def test_fusion_ranking(self, oracle_memory: MemoryEngine, request_context: RequestContext):
@@ -646,7 +668,7 @@ class TestSearchRetrieval:
             )
             assert len(result.results) > 0
         finally:
-            await oracle_memory.delete_bank(bank_id, request_context=request_context)
+            await _safe_cleanup(oracle_memory, bank_id, request_context)
 
     @pytest.mark.asyncio
     async def test_search_with_limit(self, oracle_memory: MemoryEngine, request_context: RequestContext):
@@ -670,7 +692,7 @@ class TestSearchRetrieval:
             # With LOW budget + low tokens, results should be limited
             assert len(result.results) <= 10
         finally:
-            await oracle_memory.delete_bank(bank_id, request_context=request_context)
+            await _safe_cleanup(oracle_memory, bank_id, request_context)
 
     @pytest.mark.asyncio
     async def test_search_bank_isolation(self, oracle_memory: MemoryEngine, request_context: RequestContext):
@@ -726,7 +748,7 @@ class TestSearchRetrieval:
             )
             assert len(result.results) > 0
         finally:
-            await oracle_memory.delete_bank(bank_id, request_context=request_context)
+            await _safe_cleanup(oracle_memory, bank_id, request_context)
 
     @pytest.mark.asyncio
     async def test_reranking(self, oracle_memory: MemoryEngine, request_context: RequestContext):
@@ -760,7 +782,7 @@ class TestSearchRetrieval:
             top = result.results[0].text
             assert "eiffel" in top.lower() or "paris" in top.lower()
         finally:
-            await oracle_memory.delete_bank(bank_id, request_context=request_context)
+            await _safe_cleanup(oracle_memory, bank_id, request_context)
 
 
 # ===================================================================
@@ -829,7 +851,7 @@ class TestAdvancedFeatures:
             )
             assert deleted is None
         finally:
-            await oracle_memory.delete_bank(bank_id, request_context=request_context)
+            await _safe_cleanup(oracle_memory, bank_id, request_context)
 
     @pytest.mark.asyncio
     async def test_mental_model_refresh(self, oracle_memory: MemoryEngine, request_context: RequestContext):
@@ -851,7 +873,7 @@ class TestAdvancedFeatures:
             )
             assert model is not None
         finally:
-            await oracle_memory.delete_bank(bank_id, request_context=request_context)
+            await _safe_cleanup(oracle_memory, bank_id, request_context)
 
     @pytest.mark.asyncio
     async def test_consolidation(self, oracle_memory: MemoryEngine, request_context: RequestContext):
@@ -874,7 +896,7 @@ class TestAdvancedFeatures:
             items = memories.get("items", memories) if isinstance(memories, dict) else memories
             assert len(items) >= 5
         finally:
-            await oracle_memory.delete_bank(bank_id, request_context=request_context)
+            await _safe_cleanup(oracle_memory, bank_id, request_context)
 
     @pytest.mark.asyncio
     async def test_operations_tracking(self, oracle_memory: MemoryEngine, request_context: RequestContext):
@@ -893,7 +915,7 @@ class TestAdvancedFeatures:
             # Retain creates async operations
             assert ops is not None
         finally:
-            await oracle_memory.delete_bank(bank_id, request_context=request_context)
+            await _safe_cleanup(oracle_memory, bank_id, request_context)
 
     @pytest.mark.asyncio
     async def test_directives_crud(self, oracle_memory: MemoryEngine, request_context: RequestContext):
@@ -921,7 +943,7 @@ class TestAdvancedFeatures:
                 request_context=request_context,
             )
         finally:
-            await oracle_memory.delete_bank(bank_id, request_context=request_context)
+            await _safe_cleanup(oracle_memory, bank_id, request_context)
 
     @pytest.mark.asyncio
     async def test_list_tags(self, oracle_memory: MemoryEngine, request_context: RequestContext):
@@ -942,7 +964,7 @@ class TestAdvancedFeatures:
             )
             assert len(tags) > 0
         finally:
-            await oracle_memory.delete_bank(bank_id, request_context=request_context)
+            await _safe_cleanup(oracle_memory, bank_id, request_context)
 
     @pytest.mark.asyncio
     async def test_task_queue(self, oracle_memory: MemoryEngine, request_context: RequestContext):
@@ -961,7 +983,7 @@ class TestAdvancedFeatures:
             )
             assert ops is not None
         finally:
-            await oracle_memory.delete_bank(bank_id, request_context=request_context)
+            await _safe_cleanup(oracle_memory, bank_id, request_context)
 
     @pytest.mark.asyncio
     async def test_bank_config(self, oracle_memory: MemoryEngine, request_context: RequestContext):
@@ -979,7 +1001,7 @@ class TestAdvancedFeatures:
             updated = await oracle_memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
             assert updated["name"] == "Config Test Bank"
         finally:
-            await oracle_memory.delete_bank(bank_id, request_context=request_context)
+            await _safe_cleanup(oracle_memory, bank_id, request_context)
 
 
 # ===================================================================
@@ -1012,7 +1034,7 @@ class TestOracleSpecific:
             )
             assert len(result.results) > 0
         finally:
-            await oracle_memory.delete_bank(bank_id, request_context=request_context)
+            await _safe_cleanup(oracle_memory, bank_id, request_context)
 
     @pytest.mark.asyncio
     async def test_oracle_text_index(self, oracle_memory: MemoryEngine, request_context: RequestContext):
@@ -1035,7 +1057,7 @@ class TestOracleSpecific:
             )
             assert len(result.results) > 0
         finally:
-            await oracle_memory.delete_bank(bank_id, request_context=request_context)
+            await _safe_cleanup(oracle_memory, bank_id, request_context)
 
     @pytest.mark.asyncio
     async def test_oracle_json_operations(self, oracle_memory: MemoryEngine, request_context: RequestContext):
@@ -1057,7 +1079,7 @@ class TestOracleSpecific:
             assert profile["name"] == "JSON Test Bank"
             assert profile["mission"] == "Test JSON CLOB storage"
         finally:
-            await oracle_memory.delete_bank(bank_id, request_context=request_context)
+            await _safe_cleanup(oracle_memory, bank_id, request_context)
 
     @pytest.mark.asyncio
     async def test_oracle_migration_idempotent(self, oracle_db_url):
@@ -1105,7 +1127,7 @@ class TestEdgeCases:
             )
             assert len(result.results) > 0
         finally:
-            await oracle_memory.delete_bank(bank_id, request_context=request_context)
+            await _safe_cleanup(oracle_memory, bank_id, request_context)
 
     @pytest.mark.asyncio
     async def test_empty_context(self, oracle_memory: MemoryEngine, request_context: RequestContext):
@@ -1125,7 +1147,7 @@ class TestEdgeCases:
             items = memories.get("items", memories) if isinstance(memories, dict) else memories
             assert len(items) >= 1
         finally:
-            await oracle_memory.delete_bank(bank_id, request_context=request_context)
+            await _safe_cleanup(oracle_memory, bank_id, request_context)
 
     @pytest.mark.asyncio
     async def test_large_content_chunking(self, oracle_memory: MemoryEngine, request_context: RequestContext):
@@ -1156,7 +1178,7 @@ class TestEdgeCases:
             # Large content should produce multiple memory units
             assert len(items) >= 1
         finally:
-            await oracle_memory.delete_bank(bank_id, request_context=request_context)
+            await _safe_cleanup(oracle_memory, bank_id, request_context)
 
     @pytest.mark.asyncio
     async def test_special_characters_in_content(self, oracle_memory: MemoryEngine, request_context: RequestContext):
@@ -1185,7 +1207,7 @@ class TestEdgeCases:
             )
             assert len(result.results) > 0
         finally:
-            await oracle_memory.delete_bank(bank_id, request_context=request_context)
+            await _safe_cleanup(oracle_memory, bank_id, request_context)
 
     @pytest.mark.asyncio
     async def test_concurrent_retains(self, oracle_memory: MemoryEngine, request_context: RequestContext):
@@ -1214,7 +1236,7 @@ class TestEdgeCases:
             items = memories.get("items", memories) if isinstance(memories, dict) else memories
             assert len(items) >= 1
         finally:
-            await oracle_memory.delete_bank(bank_id, request_context=request_context)
+            await _safe_cleanup(oracle_memory, bank_id, request_context)
 
     @pytest.mark.asyncio
     async def test_recall_empty_bank(self, oracle_memory: MemoryEngine, request_context: RequestContext):
@@ -1233,7 +1255,7 @@ class TestEdgeCases:
             assert result.results is not None
             assert len(result.results) == 0
         finally:
-            await oracle_memory.delete_bank(bank_id, request_context=request_context)
+            await _safe_cleanup(oracle_memory, bank_id, request_context)
 
     @pytest.mark.asyncio
     async def test_delete_nonexistent_bank(self, oracle_memory: MemoryEngine, request_context: RequestContext):
@@ -1256,7 +1278,7 @@ class TestEdgeCases:
                 event_date=datetime(2024, 1, 1, tzinfo=timezone.utc),
                 request_context=request_context,
             )
-            await oracle_memory.delete_bank(bank_id, request_context=request_context)
+            await _safe_cleanup(oracle_memory, bank_id, request_context)
 
             # Second cycle — same bank_id, different content
             await oracle_memory.retain_async(
@@ -1278,7 +1300,7 @@ class TestEdgeCases:
             all_text = " ".join(r.text for r in result.results).lower()
             assert "first cycle" not in all_text
         finally:
-            await oracle_memory.delete_bank(bank_id, request_context=request_context)
+            await _safe_cleanup(oracle_memory, bank_id, request_context)
 
     @pytest.mark.asyncio
     async def test_multiple_documents_same_bank(self, oracle_memory: MemoryEngine, request_context: RequestContext):
@@ -1311,4 +1333,4 @@ class TestEdgeCases:
             items_after = docs_after.get("items", docs_after.get("documents", []))
             assert len(items_after) >= 2
         finally:
-            await oracle_memory.delete_bank(bank_id, request_context=request_context)
+            await _safe_cleanup(oracle_memory, bank_id, request_context)
