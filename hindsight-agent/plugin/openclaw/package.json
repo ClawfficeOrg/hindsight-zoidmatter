@@ -1,0 +1,17 @@
+{
+  "name": "@hindsight/agent-retain",
+  "version": "0.1.0",
+  "description": "Lightweight OpenClaw plugin that retains conversations via hindsight-agent CLI",
+  "type": "module",
+  "main": "dist/index.js",
+  "openclaw": {
+    "extensions": ["./dist/index.js"]
+  },
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build"
+  },
+  "devDependencies": {
+    "typescript": "^5.4"
+  }
+}

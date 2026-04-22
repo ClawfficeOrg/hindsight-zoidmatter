@@ -1640,6 +1640,7 @@ class MentalModelResponse(BaseModel):
     id: str
     bank_id: str
     name: str
+    kb_id: str | None = None
     source_query: str | None = None
     content: str | None = Field(
         default=None,
@@ -1741,6 +1742,7 @@ class BankTemplateMentalModel(BaseModel):
     name: str = Field(description="Human-readable name for the mental model")
     source_query: str = Field(description="The query to run to generate content")
     tags: list[str] = FieldWithDefault(list, description="Tags for scoped visibility")
+    kb_id: str | None = Field(default=None, description="Knowledge base ID to assign this mental model to")
     max_tokens: int = Field(default=2048, ge=256, le=8192, description="Maximum tokens for generated content")
     trigger: MentalModelTrigger = FieldWithDefault(MentalModelTrigger, description="Trigger settings")
 
@@ -2052,6 +2054,7 @@ async def apply_bank_template_manifest(
                     tags=mm.tags if mm.tags else None,
                     max_tokens=mm.max_tokens,
                     trigger=mm.trigger.model_dump() if mm.trigger else None,
+                    kb_id=mm.kb_id,
                     request_context=request_context,
                 )
                 result = await memory.submit_async_refresh_mental_model(

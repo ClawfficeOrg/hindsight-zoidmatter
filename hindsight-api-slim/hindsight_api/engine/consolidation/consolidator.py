@@ -611,21 +611,12 @@ async def run_consolidation_job(
 
     # Trigger mental model refreshes only on the final round (when all memories are processed).
     # If we hit the round limit and re-queued, skip MM refresh — the next round will handle it.
+    # Trigger mental model refreshes only on the final round (when all memories are processed).
+    # If we hit the round limit and re-queued, skip MM refresh — the next round will handle it.
     if hit_round_limit:
-        stats["knowledge_base_updates"] = 0
         stats["mental_models_refreshed"] = 0
-        logger.info(f"[CONSOLIDATION] bank={bank_id} skipping KB updates and mental model refresh (round limit hit, re-queued)")
+        logger.info(f"[CONSOLIDATION] bank={bank_id} skipping mental model refresh (round limit hit, re-queued)")
     else:
-        # Run knowledge base updates: decide whether to create/reorganize MMs based on new observations
-        kb_updates = await _run_knowledge_base_updates(
-            memory_engine=memory_engine,
-            bank_id=bank_id,
-            request_context=request_context,
-            consolidated_tags=list(consolidated_tags) if consolidated_tags else None,
-            perf=perf,
-        )
-        stats["knowledge_base_updates"] = kb_updates
-
         # SECURITY: Only refresh mental models with matching tags (or all if no tags were consolidated)
         mental_models_refreshed = await _trigger_mental_model_refreshes(
             memory_engine=memory_engine,
@@ -747,17 +738,13 @@ async def _run_knowledge_base_updates(
 
         obs_summaries = [r["text"][:200] for r in recent_obs]
 
-        existing_mm_details = ", ".join(
-            f'"{n}"' for n in existing_mm_names
-        ) if existing_mm_names else "(none yet)"
+        existing_mm_details = ", ".join(f'"{n}"' for n in existing_mm_names) if existing_mm_names else "(none yet)"
 
         prompt = (
             "You are managing a knowledge base. You can CREATE new pages or DROP existing ones.\n\n"
             f"KB Mission: {mission}\n\n"
             f"Existing pages: {existing_mm_details}\n\n"
-            f"Recent observations ({len(obs_summaries)}):\n"
-            + "\n".join(f"- {s}" for s in obs_summaries[:20])
-            + "\n\n"
+            f"Recent observations ({len(obs_summaries)}):\n" + "\n".join(f"- {s}" for s in obs_summaries[:20]) + "\n\n"
             "TWO possible actions:\n\n"
             '1. CREATE a new page: {"action": "create", "id": "lowercase-id", "name": "Name", "source_query": "Question about user preferences..."}\n'
             '2. DROP a duplicate/junk page: {"action": "drop", "id": "existing-page-id"}\n\n'
@@ -807,9 +794,7 @@ async def _run_knowledge_base_updates(
                     if mm_id not in existing_mm_ids:
                         continue
                     try:
-                        await memory_engine.delete_mental_model(
-                            bank_id, mm_id, request_context=request_context
-                        )
+                        await memory_engine.delete_mental_model(bank_id, mm_id, request_context=request_context)
                         stats["mms_dropped"] = stats.get("mms_dropped", 0) + 1
                         logger.info(f"[KB_UPDATE] Dropped MM '{mm_id}' from KB '{kb_id}' for bank {bank_id}")
                     except Exception as e:

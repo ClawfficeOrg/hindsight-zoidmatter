@@ -1,0 +1,16 @@
+[project]
+name = "hindsight-agent"
+version = "0.1.0"
+description = "Agent scaffolding and runtime CLI for Hindsight memory"
+requires-python = ">=3.11"
+dependencies = [
+    "click>=8.1",
+    "httpx>=0.27",
+]
+
+[project.scripts]
+hindsight-agent = "hindsight_agent.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

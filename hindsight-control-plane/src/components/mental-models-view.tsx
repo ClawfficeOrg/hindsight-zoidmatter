@@ -58,6 +58,7 @@ import {
   ChevronsRight,
   LayoutGrid,
   List,
+  BookOpen,
   MoreVertical,
   Pencil,
 } from "lucide-react";
@@ -86,6 +87,7 @@ interface MentalModel {
   id: string;
   bank_id: string;
   name: string;
+  kb_id?: string | null;
   source_query: string;
   content: string;
   tags: string[];
@@ -109,6 +111,14 @@ interface MentalModel {
 
 type ViewMode = "dashboard" | "table";
 
+interface KnowledgeBase {
+  id: string;
+  bank_id: string;
+  name: string;
+  mission: string;
+  mental_model_count: number;
+}
+
 export function MentalModelsView() {
   const { currentBank } = useBank();
   const [mentalModels, setMentalModels] = useState<MentalModel[]>([]);
@@ -117,6 +127,10 @@ export function MentalModelsView() {
   const [searchQuery, setSearchQuery] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 100;
+
+  // Knowledge Base state
+  const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
+  const [selectedKb, setSelectedKb] = useState<string>("");
 
   const [showCreateMentalModel, setShowCreateMentalModel] = useState(false);
   const [selectedMentalModel, setSelectedMentalModel] = useState<MentalModel | null>(null);
@@ -140,12 +154,28 @@ export function MentalModelsView() {
     );
   });
 
+  const loadKnowledgeBases = async () => {
+    if (!currentBank) return;
+    try {
+      const kbData = await client.listKnowledgeBases(currentBank);
+      setKnowledgeBases(kbData.items || []);
+    } catch {
+      // KB feature might not be available — silently ignore
+      setKnowledgeBases([]);
+    }
+  };
+
   const loadData = async () => {
     if (!currentBank) return;
 
     setLoading(true);
     try {
-      const mentalModelsData = await client.listMentalModels(currentBank);
+      const mentalModelsData = await client.listMentalModels(
+        currentBank,
+        undefined,
+        undefined,
+        selectedKb || undefined
+      );
       setMentalModels(mentalModelsData.items || []);
     } catch (error) {
       console.error("Error loading mental models:", error);
@@ -203,9 +233,16 @@ export function MentalModelsView() {
 
   useEffect(() => {
     if (currentBank) {
+      loadKnowledgeBases();
       loadData();
     }
   }, [currentBank]);
+
+  useEffect(() => {
+    if (currentBank) {
+      loadData();
+    }
+  }, [selectedKb]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -247,8 +284,8 @@ export function MentalModelsView() {
         </div>
       ) : (
         <>
-          {/* Search filter */}
-          <div className="mb-4">
+          {/* Search filter + KB selector */}
+          <div className="mb-4 flex items-center gap-3">
             <Input
               type="text"
               value={searchQuery}
@@ -256,6 +293,25 @@ export function MentalModelsView() {
               placeholder="Filter mental models by name, query, or content..."
               className="max-w-md"
             />
+            {knowledgeBases.length > 0 && (
+              <Select value={selectedKb} onValueChange={(v) => setSelectedKb(v === "__all__" ? "" : v)}>
+                <SelectTrigger className="w-[200px]">
+                  <BookOpen className="w-4 h-4 mr-2 text-muted-foreground" />
+                  <SelectValue placeholder="All Knowledge Bases" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all__">All Knowledge Bases</SelectItem>
+                  {knowledgeBases.map((kb) => (
+                    <SelectItem key={kb.id} value={kb.id}>
+                      {kb.name || kb.id}
+                      <span className="ml-2 text-xs text-muted-foreground">
+                        ({kb.mental_model_count})
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
           </div>
 
           <div className="flex items-center justify-between mb-6">
@@ -320,6 +376,11 @@ export function MentalModelsView() {
                                 <code className="text-xs font-mono text-muted-foreground truncate">
                                   {m.id}
                                 </code>
+                                {m.kb_id && (
+                                  <span className="text-xs px-2 py-0.5 rounded-full font-medium flex-shrink-0 bg-purple-500/10 text-purple-600 dark:text-purple-400">
+                                    {m.kb_id}
+                                  </span>
+                                )}
                                 <span
                                   className={`text-xs px-2 py-0.5 rounded-full font-medium flex-shrink-0 ${
                                     m.trigger?.refresh_after_consolidation
@@ -522,6 +583,7 @@ export function MentalModelsView() {
           // Reload the list immediately to show the new mental model
           loadData();
         }}
+        knowledgeBases={knowledgeBases}
       />
 
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
@@ -638,10 +700,12 @@ function CreateMentalModelDialog({
   open,
   onClose,
   onCreated,
+  knowledgeBases,
 }: {
   open: boolean;
   onClose: () => void;
   onCreated: () => void;
+  knowledgeBases: KnowledgeBase[];
 }) {
   const { currentBank } = useBank();
   const [creating, setCreating] = useState(false);
@@ -651,6 +715,7 @@ function CreateMentalModelDialog({
     sourceQuery: "",
     maxTokens: "2048",
     tags: "",
+    kbId: "",
     autoRefresh: false,
     mode: "full" as "full" | "delta",
     factTypes: [] as Array<"world" | "experience" | "observation">,
@@ -707,6 +772,7 @@ function CreateMentalModelDialog({
         source_query: form.sourceQuery.trim(),
         tags: tags.length > 0 ? tags : undefined,
         max_tokens: maxTokens,
+        kb_id: form.kbId || undefined,
         trigger: {
           mode: form.mode,
           refresh_after_consolidation: form.autoRefresh,
@@ -727,6 +793,7 @@ function CreateMentalModelDialog({
         sourceQuery: "",
         maxTokens: "2048",
         tags: "",
+        kbId: "",
         autoRefresh: false,
         mode: "full",
         factTypes: [],
@@ -757,6 +824,7 @@ function CreateMentalModelDialog({
             sourceQuery: "",
             maxTokens: "2048",
             tags: "",
+            kbId: "",
             autoRefresh: false,
             mode: "full",
             factTypes: [],
@@ -817,6 +885,30 @@ function CreateMentalModelDialog({
                   placeholder="e.g., How does the team prefer to communicate?"
                 />
               </div>
+              {knowledgeBases.length > 0 && (
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-foreground">Knowledge Base</label>
+                  <Select
+                    value={form.kbId || "__none__"}
+                    onValueChange={(v) => setForm({ ...form, kbId: v === "__none__" ? "" : v })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="None" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">None</SelectItem>
+                      {knowledgeBases.map((kb) => (
+                        <SelectItem key={kb.id} value={kb.id}>
+                          {kb.name || kb.id}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    Assign to a knowledge base for grouped management
+                  </p>
+                </div>
+              )}
               <div className="space-y-2">
                 <label className="text-sm font-medium text-foreground">Max Tokens</label>
                 <Input
