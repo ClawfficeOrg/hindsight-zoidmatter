@@ -33,7 +33,7 @@ def retain(agent_id: str, input_file: str | None, document_id: str | None) -> No
     The caller (plugin) decides the format.
     """
     cfg = get_agent(agent_id)
-    api = HindsightAPI(cfg.api_url)
+    api = HindsightAPI(cfg.api_url, api_token=cfg.api_token)
 
     # Read content as raw text
     if input_file:

@@ -36,6 +36,7 @@ interface Message {
 interface AgentConfig {
   bank_id: string;
   api_url: string;
+  api_token?: string;
 }
 
 const CONFIG_PATH = join(homedir(), ".hindsight-agent", "config.json");
@@ -105,7 +106,10 @@ export default function (api: PluginAPI) {
     try {
       const response = await fetch(url, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(agentConfig.api_token ? { Authorization: `Bearer ${agentConfig.api_token}` } : {}),
+        },
         body: JSON.stringify({ items: [item], async: true }),
         signal: AbortSignal.timeout(30_000),
       });

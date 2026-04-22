@@ -25,7 +25,7 @@ def recall(agent_id: str, query: str, max_results: int, types: tuple[str, ...]) 
     QUERY is the natural language search query.
     """
     cfg = get_agent(agent_id)
-    api = HindsightAPI(cfg.api_url)
+    api = HindsightAPI(cfg.api_url, api_token=cfg.api_token)
     result = api.recall(
         cfg.bank_id,
         query,

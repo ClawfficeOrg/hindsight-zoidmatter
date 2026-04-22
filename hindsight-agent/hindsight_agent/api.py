@@ -6,9 +6,12 @@ import httpx
 
 
 class HindsightAPI:
-    def __init__(self, api_url: str, timeout: float = 30.0):
+    def __init__(self, api_url: str, api_token: str | None = None, timeout: float = 30.0):
         self.base = api_url.rstrip("/")
-        self.client = httpx.Client(base_url=self.base, timeout=timeout)
+        headers = {}
+        if api_token:
+            headers["Authorization"] = f"Bearer {api_token}"
+        self.client = httpx.Client(base_url=self.base, timeout=timeout, headers=headers)
 
     def _bank_url(self, bank_id: str) -> str:
         return f"/v1/default/banks/{bank_id}"

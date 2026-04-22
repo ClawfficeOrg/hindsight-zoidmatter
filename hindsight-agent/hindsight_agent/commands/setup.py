@@ -31,6 +31,12 @@ OPENCLAW_PLUGIN_DIR = Path(__file__).resolve().parent.parent.parent / "plugin" /
     help="Hindsight API URL",
 )
 @click.option(
+    "--api-token",
+    default=None,
+    envvar="HINDSIGHT_API_TOKEN",
+    help="Hindsight API token (for cloud/authenticated instances)",
+)
+@click.option(
     "--harness",
     type=click.Choice(["openclaw"]),
     required=True,
@@ -44,6 +50,7 @@ def setup(
     agent_id: str,
     bank_id: str,
     api_url: str,
+    api_token: str | None,
     harness: str,
     workspace: str | None,
     model: str | None,
@@ -65,7 +72,7 @@ def setup(
 
     # 1. Create bank on Hindsight
     click.echo("Creating Hindsight bank...")
-    api = HindsightAPI(api_url)
+    api = HindsightAPI(api_url, api_token=api_token)
 
     # If template provided, import it first (this also creates the bank)
     if template:
@@ -88,6 +95,7 @@ def setup(
         api_url=api_url,
         harness=harness,
         workspace=str(workspace_path),
+        api_token=api_token,
     )
     save_config(agents)
     click.echo("  Done.")

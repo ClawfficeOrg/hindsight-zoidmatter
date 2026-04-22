@@ -24,7 +24,7 @@ def pages() -> None:
 def list_pages(agent_id: str) -> None:
     """List all knowledge pages for an agent."""
     cfg = get_agent(agent_id)
-    api = HindsightAPI(cfg.api_url)
+    api = HindsightAPI(cfg.api_url, api_token=cfg.api_token)
     items = api.list_pages(cfg.bank_id)
     click.echo(json.dumps({"items": items}, indent=2))
 
@@ -35,7 +35,7 @@ def list_pages(agent_id: str) -> None:
 def get_page(agent_id: str, page_id: str) -> None:
     """Get a specific knowledge page."""
     cfg = get_agent(agent_id)
-    api = HindsightAPI(cfg.api_url)
+    api = HindsightAPI(cfg.api_url, api_token=cfg.api_token)
     page = api.get_page(cfg.bank_id, page_id)
     click.echo(json.dumps(page, indent=2))
 
@@ -53,7 +53,7 @@ def create_page(agent_id: str, name: str, source_query: str, page_id: str | None
     to rebuild the page content from observations.
     """
     cfg = get_agent(agent_id)
-    api = HindsightAPI(cfg.api_url)
+    api = HindsightAPI(cfg.api_url, api_token=cfg.api_token)
     result = api.create_page(
         cfg.bank_id,
         name=name,
@@ -75,7 +75,7 @@ def update_page(
     if name is None and source_query is None:
         raise click.ClickException("At least one of --name or --source-query must be provided.")
     cfg = get_agent(agent_id)
-    api = HindsightAPI(cfg.api_url)
+    api = HindsightAPI(cfg.api_url, api_token=cfg.api_token)
     result = api.update_page(cfg.bank_id, page_id, name=name, source_query=source_query)
     click.echo(json.dumps(result, indent=2))
 
@@ -86,6 +86,6 @@ def update_page(
 def delete_page(agent_id: str, page_id: str) -> None:
     """Delete a knowledge page."""
     cfg = get_agent(agent_id)
-    api = HindsightAPI(cfg.api_url)
+    api = HindsightAPI(cfg.api_url, api_token=cfg.api_token)
     api.delete_page(cfg.bank_id, page_id)
     click.echo(json.dumps({"success": True}))

@@ -20,9 +20,14 @@ class AgentConfig:
     api_url: str
     harness: str
     workspace: str
+    api_token: str | None = None
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        d = asdict(self)
+        # Omit None token from serialized output
+        if d.get("api_token") is None:
+            d.pop("api_token", None)
+        return d
 
     @staticmethod
     def from_dict(d: dict) -> AgentConfig:
@@ -31,6 +36,7 @@ class AgentConfig:
             api_url=d["api_url"],
             harness=d["harness"],
             workspace=d["workspace"],
+            api_token=d.get("api_token"),
         )
 
 

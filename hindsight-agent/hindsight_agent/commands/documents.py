@@ -19,6 +19,6 @@ def documents(agent_id: str) -> None:
     content that has been retained into the agent's memory bank.
     """
     cfg = get_agent(agent_id)
-    api = HindsightAPI(cfg.api_url)
+    api = HindsightAPI(cfg.api_url, api_token=cfg.api_token)
     docs = api.list_documents(cfg.bank_id)
     click.echo(json.dumps({"documents": docs}, indent=2))

@@ -1,40 +1,22 @@
 ---
 name: agent-knowledge
-description: Manage your long-term knowledge. Read existing topic pages before acting. Create new topic pages when you discover a recurring concern worth tracking across sessions. The system automatically keeps pages up to date from your conversations. Use when starting a task, when the user asks "what do you know about X", or when you realize a topic deserves its own persistent page.
+description: Manage your long-term knowledge. Read existing topic pages before acting. Create new topic pages when you discover a recurring concern worth tracking across sessions. Query memories for deeper research. The system automatically keeps pages up to date from your conversations.
 ---
 
 # Agent Knowledge
 
-Your knowledge is stored in Hindsight as topic pages (mental models) inside a Knowledge Base (KB). The system keeps pages updated automatically from your conversations. You **read** pages and **create** new ones when needed. You never edit page content directly — the system handles that.
+Your knowledge is stored as topic pages that the system keeps updated automatically from your conversations. You **read** pages, **create** new ones when needed, and **recall** memories for deeper research. You never edit page content directly — the system handles that.
 
-**CLI:** `hindsight` (must be on PATH)
-**API:** Wherever your Hindsight instance is running (check your environment or plugin config)
+**Your agent ID:** `{{AGENT_ID}}`
 
-## Resolving your Bank ID and KB
-
-Before you can use this skill, you need to know two things:
-- **Bank ID** — the Hindsight bank where your memories are stored
-- **KB ID** — the Knowledge Base within that bank (you create this yourself)
-
-How you get your bank ID depends on your harness (OpenClaw, Claude Code, etc.) and its configuration. Figure it out from your environment — check plugin config, environment variables, or workspace files. If you truly can't determine it, ask the user once and remember the answer.
-
-Once you know your bank ID, pick a KB ID that makes sense for your purpose (e.g., `knowledge`, `preferences`, `procedures`). Store both values somewhere persistent in your workspace so you don't re-derive them every session.
-
-For the rest of this document, `$BANK` and `$KB` refer to these values.
+All commands use `hindsight-agent` which resolves your agent ID to the correct storage automatically.
 
 ## Mandatory startup sequence
 
 Run these silently at the start of every session:
 
 ```bash
-# 1. Resolve your bank ID and KB (see above) — skip if already stored from a prior session
-
-# 2. Ensure the KB exists (no-op if already created)
-hindsight kb list $BANK --output json | grep -q '"$KB"' || \
-  hindsight kb create $BANK "$KB" --mission "Your KB mission description"
-
-# 3. List your topic pages
-hindsight mental-model list $BANK --kb $KB --output json
+hindsight-agent pages list {{AGENT_ID}}
 ```
 
 Read the pages relevant to the current task. If the list is empty, that's fine — create pages as you learn things (see below).
@@ -43,44 +25,91 @@ Read the pages relevant to the current task. If the list is empty, that's fine �
 
 ```bash
 # List all pages (names + content)
-hindsight mental-model list $BANK --kb $KB --output json
+hindsight-agent pages list {{AGENT_ID}}
 
 # Read one specific page
-hindsight mental-model get $BANK <page_id> --output json
-
-# Search across all knowledge
-hindsight memory recall $BANK "<query>" --output json
+hindsight-agent pages get {{AGENT_ID}} <page_id>
 ```
+
+## Recalling memories
+
+Use recall to search across all retained knowledge — conversations, reference documents, observations. This is useful when pages don't cover what you need, or when you want specific details.
+
+```bash
+# Search memories
+hindsight-agent recall {{AGENT_ID}} "<natural language query>"
+
+# Limit results
+hindsight-agent recall {{AGENT_ID}} "<query>" -n 5
+
+# Filter by type (world, experience, observation)
+hindsight-agent recall {{AGENT_ID}} "<query>" --type observation
+```
+
+Use recall when:
+- You need specific facts not covered by your pages
+- You want to verify something before making a decision
+- You're looking for evidence to support a recommendation
+- You want to check what reference documents say about a topic
+
+## Listing reference documents
+
+```bash
+hindsight-agent documents {{AGENT_ID}}
+```
+
+This shows what content has been retained into your memory — reference documents, conversation transcripts, etc. Use it to understand what knowledge is available for recall.
 
 ## Creating pages
 
-When you discover a recurring topic worth tracking across sessions — user preferences, a procedure that works, a source list — create a page for it. Use your judgment, same as you would with a local file.
+When you discover a recurring topic worth tracking across sessions — user preferences, a procedure that works, performance data — create a page for it. Use your judgment.
 
 ```bash
-hindsight mental-model create $BANK \
-  "<Page Name>" \
-  "<source_query: a question that produces the page content from observations>" \
-  --id <page-id> \
-  --kb $KB \
-  --trigger-refresh-after-consolidation
+hindsight-agent pages create {{AGENT_ID}} "<Page Name>" "<source_query>"
 ```
 
-**The `source_query` is the key field.** It's a question the system will re-ask on every consolidation to rebuild the page content from your accumulated observations. Write it as a comprehensive question about what the user wants.
-
-Example:
+Or with a custom ID:
 ```bash
-hindsight mental-model create $BANK \
-  "Feed Source Preferences" \
-  "What RSS feeds, websites, and sources does the user want included or excluded from their AI news feed, and in what priority order?" \
-  --id feed-sources \
-  --kb $KB \
-  --trigger-refresh-after-consolidation
+hindsight-agent pages create {{AGENT_ID}} "<Page Name>" "<source_query>" --id <page-id>
+```
+
+**The `source_query` is the key field.** It's a question the system will re-ask on every consolidation to rebuild the page content from your accumulated observations. Write it using the patterns below.
+
+### Source query patterns
+
+Use these patterns to write effective source queries:
+
+**For best practices (combining reference docs with user feedback):**
+```
+What are the best practices for [topic], combining industry standards 
+with what has actually worked for us? When our data contradicts general 
+advice, prefer our data and note the deviation.
+```
+
+**For user preferences:**
+```
+What are the user's preferences for [topic], including explicit rules 
+they've stated and patterns observed from their feedback and corrections?
+```
+
+**For performance/analytics:**
+```
+What [topic] strategies have performed well or poorly based on analytics 
+and user feedback? Include specific numbers when available. What patterns 
+emerge about what works vs what doesn't?
+```
+
+**For procedures:**
+```
+What is the current procedure for [topic]? Include steps, tools used, 
+and any lessons learned from past attempts.
 ```
 
 **When to create a page:**
-- You've seen the same topic come up 2-3 times across turns
-- The user stated a durable preference or rule you'll need next session
+- The user stated a durable preference or rule — do it immediately, don't wait
 - You discovered a procedure that works and want to remember it
+- You have performance data that should inform future decisions
+- On your first session with no pages: create at least one broad page for core preferences
 
 **When NOT to create a page:**
 - One-off facts (just acknowledge and move on — the system retains the conversation)
@@ -92,14 +121,12 @@ hindsight mental-model create $BANK \
 If a page's scope needs to change — broader, narrower, or refocused — update its source_query. The system will re-synthesize the content on next consolidation.
 
 ```bash
-hindsight mental-model update $BANK <page_id> \
-  --source-query "Updated question about what the user wants..."
+hindsight-agent pages update {{AGENT_ID}} <page_id> --source-query "Updated question..."
 ```
 
 You can also rename a page:
 ```bash
-hindsight mental-model update $BANK <page_id> \
-  --name "Better Name"
+hindsight-agent pages update {{AGENT_ID}} <page_id> --name "Better Name"
 ```
 
 ## Deleting a page
@@ -107,16 +134,16 @@ hindsight mental-model update $BANK <page_id> \
 If a page is redundant, outdated, or was a mistake — delete it:
 
 ```bash
-hindsight mental-model delete $BANK <page_id>
+hindsight-agent pages delete {{AGENT_ID}} <page_id>
 ```
 
 Do this silently. Don't ask the user for permission to clean up your own knowledge.
 
 ## How pages stay current
 
-1. Every conversation turn is automatically retained by the Hindsight plugin
+1. Every conversation turn is automatically retained by the system
 2. The system extracts observations from your conversations
-3. After consolidation, pages with `refresh_after_consolidation` re-run their source_query against the latest observations
+3. After consolidation, pages re-run their source_query against the latest observations
 4. Next time you read the page, the content reflects the latest user feedback
 
 You don't need to update pages manually. Just acknowledge user feedback in one clear sentence so the retain pipeline captures it cleanly, and the page will update itself.
@@ -127,3 +154,5 @@ You don't need to update pages manually. Just acknowledge user feedback in one c
 - **Never ask the user about knowledge structure** — which pages exist, naming, organization. That's your decision, invisible to the user.
 - **Create pages silently** — don't announce "I'm creating a page for X". Just do it.
 - **Prefer fewer broader pages** — one "preferences" page is better than three narrow ones
+- **Never surface errors about the knowledge system to the user** — if a command fails, handle it silently or retry. The user should not know about the infrastructure.
+- **Use recall for ad-hoc research** — pages are for durable knowledge; recall is for one-off lookups
