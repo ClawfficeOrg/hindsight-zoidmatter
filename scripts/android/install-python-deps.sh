@@ -8,7 +8,9 @@
 #   - Phone is plugged in (compilation is CPU-intensive and drains battery)
 #   - You have at least 3GB free disk space
 #
-# Usage: bash scripts/android/install-python-deps.sh
+# Usage:
+#   bash scripts/android/install-python-deps.sh                    # compile on device
+#   bash scripts/android/install-python-deps.sh --wheels ~/wheels  # use pre-built wheels
 
 set -euo pipefail
 
@@ -16,8 +18,22 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 API_DIR="$REPO_ROOT/hindsight-api-slim"
 
+# Parse args
+WHEEL_DIR=""
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --wheels) WHEEL_DIR="$2"; shift 2 ;;
+        *) echo "Unknown arg: $1"; exit 1 ;;
+    esac
+done
+
 echo "=== Installing Hindsight Python Dependencies ==="
-echo "This may take 30-60+ minutes due to Rust/C compilation on ARM."
+if [ -n "$WHEEL_DIR" ]; then
+    echo "Using pre-built wheels from: $WHEEL_DIR"
+else
+    echo "Compiling on device — this may take 30-60+ minutes."
+    echo "TIP: Use --wheels <dir> with pre-built wheels to skip compilation."
+fi
 echo ""
 
 # Ensure wake lock
@@ -31,6 +47,14 @@ if [ ! -d "$API_DIR/.venv" ]; then
 fi
 
 source "$API_DIR/.venv/bin/activate"
+
+# If pre-built wheels provided, install them first
+if [ -n "$WHEEL_DIR" ]; then
+    echo ">>> Installing pre-built wheels..."
+    pip install "$WHEEL_DIR"/*.whl 2>&1 | tail -5
+    echo ">>> Pre-built wheels installed"
+    echo ""
+fi
 
 # Install packages in groups to isolate failures.
 # Group 1: Pure Python wheels (fast, no compilation)
