@@ -296,7 +296,7 @@ def _manually_configure_openclaw_plugin(openclaw_config: Path) -> None:
 
 
 def _setup_hermes(agent_id: str, workspace: Path) -> None:
-    """Install the hindsight-agent memory plugin into Hermes."""
+    """Install the hindsight-agent memory plugin into Hermes and create profile if needed."""
     hermes_home = Path.home() / ".hermes"
 
     if not HERMES_PLUGIN_DIR.exists():
@@ -305,7 +305,20 @@ def _setup_hermes(agent_id: str, workspace: Path) -> None:
             "Make sure you're running from the hindsight-agent repo."
         )
 
-    # Memory plugins live in the hermes-agent repo checkout, not ~/.hermes/plugins/
+    # Create Hermes profile if it doesn't exist (skip for "default")
+    if agent_id != "default":
+        result = subprocess.run(
+            ["hermes", "profile", "create", agent_id, "--clone", "--no-alias"],
+            capture_output=True, text=True,
+        )
+        if result.returncode == 0:
+            click.echo(f"  Created Hermes profile '{agent_id}'.")
+        elif "already exists" in result.stderr.lower():
+            click.echo(f"  Profile '{agent_id}' already exists.")
+        else:
+            click.echo(f"  Note: Create profile manually: hermes profile create {agent_id}")
+
+    # Memory plugins live in the hermes-agent repo checkout
     plugin_dest = hermes_home / "hermes-agent" / "plugins" / "memory" / "hindsight_agent"
     plugin_dest.mkdir(parents=True, exist_ok=True)
     for src_file in HERMES_PLUGIN_DIR.iterdir():
@@ -321,12 +334,12 @@ def _setup_hermes(agent_id: str, workspace: Path) -> None:
 
     click.echo(f"  Retain plugin installed to {plugin_dest}")
 
-    # Set the memory provider
-    result = subprocess.run(
-        ["hermes", "config", "set", "memory.provider", "hindsight_agent"],
-        capture_output=True, text=True,
-    )
+    # Set memory provider (profile-scoped if not default)
+    config_cmd = ["hermes", "config", "set", "memory.provider", "hindsight_agent"]
+    if agent_id != "default":
+        config_cmd = ["hermes", "--profile", agent_id, "config", "set", "memory.provider", "hindsight_agent"]
+    result = subprocess.run(config_cmd, capture_output=True, text=True)
     if result.returncode == 0:
         click.echo("  Memory provider set to hindsight_agent")
     else:
-        click.echo("  Note: Set memory provider with: hermes config set memory.provider hindsight_agent")
+        click.echo(f"  Note: Set memory provider with: hermes config set memory.provider hindsight_agent")
