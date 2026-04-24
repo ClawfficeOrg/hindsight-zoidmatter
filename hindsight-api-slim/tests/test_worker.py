@@ -255,10 +255,12 @@ class TestWorkerPoller:
         )
 
         claimed = await poller.claim_batch()
-        assert len(claimed) == 3
+        # Filter to our bank — parallel tests may contribute other claims.
+        my_claims = [c for c in claimed if c.task_dict.get("bank_id") == bank_id]
+        assert len(my_claims) == 3, f"Expected 3 claims for our bank, got {len(my_claims)}"
 
         # ClaimedTask objects have operation_id, task_dict, schema attributes
-        for task in claimed:
+        for task in my_claims:
             assert task.operation_id is not None
             assert task.task_dict is not None
 
@@ -1097,7 +1099,9 @@ class TestConcurrentWorkers:
                 payload,
             )
 
-        # Create 3 workers that will claim tasks concurrently
+        # Create 3 workers that will claim tasks concurrently. Filter each
+        # worker's claims down to our bank — parallel test files may contribute
+        # other pending rows that these workers legitimately pick up.
         workers_claimed: dict[str, list[str]] = {"worker-1": [], "worker-2": [], "worker-3": []}
 
         async def claim_for_worker(worker_id: str):
@@ -1107,7 +1111,9 @@ class TestConcurrentWorkers:
                 executor=lambda x: None,
             )
             claimed = await poller.claim_batch()
-            workers_claimed[worker_id] = [task.operation_id for task in claimed]
+            workers_claimed[worker_id] = [
+                task.operation_id for task in claimed if task.task_dict.get("bank_id") == bank_id
+            ]
 
         # Run all workers concurrently
         await asyncio.gather(
@@ -1120,8 +1126,8 @@ class TestConcurrentWorkers:
         all_claimed = workers_claimed["worker-1"] + workers_claimed["worker-2"] + workers_claimed["worker-3"]
         assert len(all_claimed) == len(set(all_claimed)), "Duplicate task claimed by multiple workers!"
 
-        # Verify total claimed equals available tasks (10)
-        assert len(all_claimed) == 10, f"Expected 10 tasks claimed, got {len(all_claimed)}"
+        # Verify total claimed equals available tasks (10) for our bank
+        assert len(all_claimed) == 10, f"Expected 10 tasks claimed for our bank, got {len(all_claimed)}"
 
         # Verify each task is assigned to exactly one worker in DB
         rows = await pool.fetch(
@@ -1907,9 +1913,19 @@ async def test_worker_slot_limits_enforced(pool, clean_operations):
 
     tasks_started = set()
     task_events = {}
+    # Use a closure-captured bank_id (set below) so the executor can ignore
+    # tasks leaked in by parallel test files.
+    bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
 
     async def controlled_executor(task_dict: dict):
+        # Other test files running in parallel may have pending async_operations
+        # that this poller legitimately claims — don't count them toward our
+        # 3-slot limit assertions, but still service them so we don't starve
+        # them. For this test, we simply complete them immediately and focus
+        # our gating on tasks for our own bank.
         op_id = task_dict["operation_id"]
+        if task_dict.get("bank_id") != bank_id:
+            return
         tasks_started.add(op_id)
         event = asyncio.Event()
         task_events[op_id] = event
@@ -1925,7 +1941,6 @@ async def test_worker_slot_limits_enforced(pool, clean_operations):
     )
 
     # Submit 10 tasks
-    bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
     await _ensure_bank(pool, bank_id)
     for i in range(10):
         op_id = uuid.uuid4()
