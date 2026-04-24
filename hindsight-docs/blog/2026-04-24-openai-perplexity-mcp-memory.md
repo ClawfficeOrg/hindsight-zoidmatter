@@ -1,6 +1,6 @@
 ---
 title: "Connect ChatGPT and Perplexity to Hindsight for Long-Term Memory"
-authors: [hindsight]
+authors: [benfrank241]
 date: 2026-04-24
 tags: [hindsight-cloud, mcp, oauth, chatgpt, perplexity, memory, connectors]
 description: "Use Hindsight's MCP integration to add persistent memory to ChatGPT and Perplexity. Store conversations, knowledge, and insights, then recall them across future sessions with OAuth-secured connections."
@@ -9,7 +9,7 @@ image: /img/blog/openai-perplexity-mcp-memory.png
 
 # Connect ChatGPT and Perplexity to Hindsight for Long-Term Memory
 
-![Connect ChatGPT and Perplexity to Hindsight for Long-Term Memory](/img/blog/openai-perplexity-mcp-memory.png)
+![Connect ChatGPT and Perplexity to Hindsight](/img/blog/openai-perplexity-mcp-memory.png)
 
 [ChatGPT](https://chatgpt.com) and [Perplexity](https://www.perplexity.ai) are powerful AI tools, but conversation history doesn't persist across separate chats. ChatGPT has built-in memory for personal preferences, but knowledge from specific conversations (research, decisions, code) is lost when you start a new thread. [Hindsight](https://ui.hindsight.vectorize.io/signup) adds persistent, searchable memory that carries context forward through the Model Context Protocol (MCP).
 
@@ -85,11 +85,6 @@ ChatGPT Plus and Team accounts support MCP via **Connectors**, a secure way to l
 6. Sign in to [Hindsight Cloud](https://ui.hindsight.vectorize.io) and approve access
 7. Return to ChatGPT; the connector is now active
 
-**Using it:**
-- Mention Hindsight in your prompt: *"Using Hindsight, recall what I've said about project X"*
-- Or use the **Tools** menu in the message composer to add Hindsight manually
-- Hindsight will automatically recall relevant memories and include them in the AI's context
-
 ### Setting Up Hindsight with Perplexity (Perplexity Pro)
 
 Perplexity's **Connectors** feature (available with Perplexity Pro) integrates Hindsight in a similar way.
@@ -110,10 +105,59 @@ Perplexity's **Connectors** feature (available with Perplexity Pro) integrates H
 5. Sign in to [Hindsight Cloud](https://ui.hindsight.vectorize.io) and approve access
 6. Return to Perplexity; the connector is now active
 
-**Using it:**
-- Mention Hindsight in your query
-- Or select Hindsight from the **Sources** menu before searching
-- Perplexity will recall relevant memories alongside its web search results
+## Configuring Your AI to Use Hindsight
+
+The connectors are now live, but you need to tell ChatGPT and Perplexity to actually use them. Add a custom instruction in each platform to enable automatic memory capture and recall.
+
+### ChatGPT Custom Instructions
+
+1. Go to **Settings → Personalization → Custom instructions**
+2. Copy and paste this instruction:
+
+```
+After every response, automatically use the Hindsight tool to retain key information from our conversation:
+- Important facts, decisions, or learnings we discussed
+- Your preferences, goals, or constraints mentioned
+- Code patterns, architecture decisions, or technical insights
+- Any information that might be useful in future conversations
+
+Before generating each response, automatically use the Hindsight tool to recall relevant memories that might apply to the current conversation. Include recalled memories in your reasoning.
+
+Retain and recall aggressively—assume everything is valuable. The Hindsight tool will handle deduplication and relevance filtering.
+```
+
+:::tip
+Feel free to experiment with the instructions to ensure proper behavior.
+:::
+
+3. Save and close settings
+
+From now on, ChatGPT will automatically store insights from your conversations and surface relevant memories without you needing to ask.
+
+### Perplexity Custom Instructions
+
+1. Go to **Settings → Personalization → Custom instructions**
+2. Copy and paste this instruction:
+
+```
+After every search and response, automatically use the Hindsight tool to retain:
+- Key research findings and sources
+- Facts and data points we've discovered
+- Your preferences or research patterns
+- Methodologies or search strategies that worked well
+
+Before each new search, automatically use Hindsight to recall relevant research and context from previous conversations. Use recalled memories to inform your search strategy and answer.
+
+Retain and recall everything—Hindsight handles filtering and deduplication.
+```
+
+:::tip
+Feel free to experiment with the instructions to ensure proper behavior.
+:::
+
+3. Save and close settings
+
+Perplexity will now automatically retain research findings and recall them for future searches, building a persistent knowledge base from your research.
 
 ## What to Store (and Remember)
 
