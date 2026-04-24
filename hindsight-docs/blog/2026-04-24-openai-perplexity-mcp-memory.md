@@ -11,7 +11,7 @@ image: /img/blog/openai-perplexity-mcp-memory.png
 
 ![Connect ChatGPT and Perplexity to Hindsight for Long-Term Memory](/img/blog/openai-perplexity-mcp-memory.png)
 
-[ChatGPT](https://chatgpt.com) and [Perplexity](https://www.perplexity.ai) are powerful AI tools, but each conversation exists in isolation. What you learn in one session vanishes when you start a new chat. [Hindsight](https://ui.hindsight.vectorize.io/signup) changes that by adding long-term memory to both platforms through the Model Context Protocol (MCP).
+[ChatGPT](https://chatgpt.com) and [Perplexity](https://www.perplexity.ai) are powerful AI tools, but conversation history doesn't persist across separate chats. ChatGPT has built-in memory for personal preferences, but knowledge from specific conversations (research, decisions, code) is lost when you start a new thread. [Hindsight](https://ui.hindsight.vectorize.io/signup) adds persistent, searchable memory that carries context forward through the Model Context Protocol (MCP).
 
 This guide walks you through connecting ChatGPT and Perplexity to Hindsight for persistent memory across sessions. You'll learn how to set up OAuth-secured connections, store knowledge from your conversations, and automatically recall it in future sessions, all with a no-code setup.
 
@@ -44,17 +44,17 @@ Hindsight uses MCP (Model Context Protocol), an open standard that lets AI tools
 
 When you connect Hindsight to ChatGPT or Perplexity, three things happen:
 
-1. **Retain**, Hindsight stores knowledge from your conversations (facts, discoveries, decisions, context)
-2. **Recall**, When you ask a new question, Hindsight automatically retrieves related memories
+1. **Retain**, You ask Hindsight to store knowledge from your conversations (facts, discoveries, decisions, context)
+2. **Recall**, When you ask a new question, Hindsight searches your memory bank and retrieves related context
 3. **Reflect**, ChatGPT or Perplexity uses those memories to give more informed, personalized answers
 
-The entire flow is automatic. You chat naturally, and Hindsight works in the background to remember what matters and surface it when relevant.
+The LLM decides whether to use Hindsight's tools based on your prompts. You can optimize this by mentioning Hindsight explicitly ("Using Hindsight, recall...") or through system prompts that encourage memory use. The more intentionally you integrate memory into your workflow, the more valuable it becomes.
 
 ## Real-World Use Cases: When to Connect ChatGPT and Perplexity to Hindsight
 
 **Software developers** can store architecture decisions and code patterns from ChatGPT brainstorming sessions. When they ask a follow-up question weeks later, Hindsight recalls the original design constraints and trade-offs, enabling ChatGPT to give more coherent guidance without re-explaining context.
 
-**Researchers** can connect Perplexity to Hindsight to build persistent research knowledge. Each search result and insight gets stored automatically. When fact-checking or building on prior work, Perplexity recalls earlier findings without needing manual search history management.
+**Researchers** can connect Perplexity to Hindsight to build persistent research knowledge. You store important findings and insights as you discover them. When fact-checking or building on prior work, you ask Perplexity to recall earlier findings, avoiding redundant searches and building on what you've already learned.
 
 **Product managers and strategists** benefit from storing competitive insights, user feedback themes, and market research in Hindsight. When ChatGPT analyzes roadmap priorities, it has immediate access to months of accumulated context instead of starting fresh each conversation.
 
