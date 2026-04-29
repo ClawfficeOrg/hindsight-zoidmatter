@@ -13,6 +13,7 @@
   ],
   "scripts": {
     "build": "tsc",
+    "test": "vitest run src",
     "prepublishOnly": "npm run build"
   },
   "keywords": [
@@ -31,7 +32,8 @@
     "directory": "hindsight-agent-setup"
   },
   "devDependencies": {
-    "typescript": "^5.4"
+    "typescript": "^5.4",
+    "vitest": "^4.1.2"
   },
   "dependencies": {
     "@clack/prompts": "^1.2.0",

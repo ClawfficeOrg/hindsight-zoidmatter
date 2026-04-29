@@ -10,6 +10,7 @@
   ],
   "scripts": {
     "build": "tsc",
+    "test": "vitest run src",
     "prepublishOnly": "npm run build"
   },
   "keywords": [
@@ -29,6 +30,7 @@
     "@vectorize-io/hindsight-client": "^0.5.6"
   },
   "devDependencies": {
-    "typescript": "^5.4"
+    "typescript": "^5.4",
+    "vitest": "^4.1.2"
   }
 }

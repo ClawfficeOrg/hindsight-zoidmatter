@@ -53,6 +53,8 @@ jobs:
       integrations-pipecat: ${{ steps.filter.outputs.integrations-pipecat }}
       integrations-agentcore: ${{ steps.filter.outputs.integrations-agentcore }}
       integrations-smolagents: ${{ steps.filter.outputs.integrations-smolagents }}
+      tools-agent-sdk: ${{ steps.filter.outputs.tools-agent-sdk }}
+      tools-self-driving-agents: ${{ steps.filter.outputs.tools-self-driving-agents }}
       dev: ${{ steps.filter.outputs.dev }}
       ci: ${{ steps.filter.outputs.ci }}
       # Secrets are available for internal PRs, pull_request_review, and workflow_dispatch.
@@ -145,6 +147,10 @@ jobs:
             - 'hindsight-integrations/agentcore/**'
           integrations-smolagents:
             - 'hindsight-integrations/smolagents/**'
+          tools-agent-sdk:
+            - 'hindsight-tools/hindsight-agent-sdk/**'
+          tools-self-driving-agents:
+            - 'hindsight-tools/self-driving-agents/**'
           dev:
             - 'hindsight-dev/**'
           ci:
@@ -513,6 +519,68 @@ jobs:
 
     - name: Build
       working-directory: ./hindsight-integrations/opencode
+      run: npm run build
+
+  test-hindsight-agent-sdk:
+    needs: [detect-changes]
+    if: >-
+      github.event_name != 'pull_request_review' &&
+      (github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.tools-agent-sdk == 'true' ||
+      needs.detect-changes.outputs.ci == 'true')
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v6
+      with:
+        node-version: '22'
+
+    - name: Install dependencies
+      working-directory: ./hindsight-tools/hindsight-agent-sdk
+      run: npm ci
+
+    - name: Run tests
+      working-directory: ./hindsight-tools/hindsight-agent-sdk
+      run: npm test
+
+    - name: Build
+      working-directory: ./hindsight-tools/hindsight-agent-sdk
+      run: npm run build
+
+  test-self-driving-agents:
+    needs: [detect-changes]
+    if: >-
+      github.event_name != 'pull_request_review' &&
+      (github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.tools-self-driving-agents == 'true' ||
+      needs.detect-changes.outputs.ci == 'true')
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v6
+      with:
+        node-version: '22'
+
+    - name: Install dependencies
+      working-directory: ./hindsight-tools/self-driving-agents
+      run: npm ci
+
+    - name: Run tests
+      working-directory: ./hindsight-tools/self-driving-agents
+      run: npm test
+
+    - name: Build
+      working-directory: ./hindsight-tools/self-driving-agents
       run: npm run build
 
   test-cloudflare-oauth-proxy-integration:
@@ -3178,6 +3246,8 @@ jobs:
       - test-embed
       - test-embed-windows
       - test-hindsight-all
+      - test-hindsight-agent-sdk
+      - test-self-driving-agents
       - test-doc-examples
       - test-upgrade
       - verify-generated-files
