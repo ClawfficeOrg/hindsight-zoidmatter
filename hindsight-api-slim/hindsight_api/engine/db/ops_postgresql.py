@@ -450,9 +450,7 @@ class PostgreSQLOps(DataAccessOps):
         budget: int,
         per_entity_limit: int,
     ) -> tuple[list[ResultRow], list[ResultRow], list[ResultRow]]:
-        # Entity expansion via observation_sources junction table.
-        # Previously used PG-specific unnest(source_memory_ids) and array
-        # overlap (&&). The junction table approach is portable across backends.
+        # Use observation_sources junction table for portable SQL joins.
         from ..schema import fq_table
 
         obs_sources_table = fq_table("observation_sources")

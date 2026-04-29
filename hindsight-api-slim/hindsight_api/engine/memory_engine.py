@@ -3323,8 +3323,6 @@ class MemoryEngine(MemoryEngineInterface):
                 obs_chunk_ids: dict[str, list[str]] = {}
                 if observation_ids_ordered:
                     async with acquire_with_retry(backend) as obs_conn:
-                        # Use observation_sources junction table instead of
-                        # PG-specific ANY(obs.source_memory_ids) array join.
                         obs_source_rows = await obs_conn.fetch(
                             f"""
                             SELECT os.observation_id AS obs_id, mu.chunk_id
@@ -3932,8 +3930,6 @@ class MemoryEngine(MemoryEngineInterface):
 
                         unit_uuids = [uuid_module.UUID(uid) for uid in unit_ids]
                         unit_uuid_set = {str(u) for u in unit_uuids}
-                        # Use observation_sources junction table instead of
-                        # PG-specific array overlap (&&) operator.
                         affected_obs = await conn.fetch(
                             f"""
                             SELECT mu.id, mu.source_memory_ids
