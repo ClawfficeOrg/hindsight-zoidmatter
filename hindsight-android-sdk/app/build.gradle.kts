@@ -5,11 +5,11 @@ plugins {
 }
 
 android {
-    namespace = "io.vectorize.hindsight.android"
+    namespace = "io.hs.pgdb"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "io.vectorize.hindsight.android"
+        applicationId = "io.hs.pgdb"
         minSdk = 24
         targetSdk = 35
         versionCode = 2

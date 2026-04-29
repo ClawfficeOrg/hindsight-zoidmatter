@@ -1,4 +1,4 @@
-package io.vectorize.hindsight.android
+package io.hs.pgdb
 
 import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -88,13 +88,14 @@ class PostgresTest {
         }
 
         val extractResult = exec(
-            "tar", "xf", archivePath, "-C", baseDir,
+            "/system/bin/sh", "-c", "cd $baseDir && tar xf $archivePath 2>&1 || true",
             env = emptyMap()
         )
         Log.i(TAG, "Extract: ${extractResult.take(200)}")
 
-        // Set up LD_LIBRARY_PATH to include both native dir and extracted libs
-        val ldPath = "$nativeDir:$baseDir/lib"
+        // Set up LD_LIBRARY_PATH to include native dir, extracted libs, and patched prefix
+        val pgPrefix = "$baseDir/usr"  // matches binary: /data/data/io.hs.pgdb/files/usr
+        val ldPath = "$nativeDir:$baseDir/lib:$pgPrefix/lib"
 
         // Step 3: Check postgres version
         // Try pg-bin copy first, fall back to nativeDir .so name
@@ -126,11 +127,22 @@ class PostgresTest {
         )
 
         // 4a: Let initdb create directory structure (it will fail at probe, that's ok)
+        // On physical devices, only nativeLibDir binaries are executable (SELinux).
+        // Create wrapper scripts that call the .so binaries by their full path.
         val setupScript = File("$pgBinDir/setup.sh")
         setupScript.writeText("""#!/system/bin/sh
 export LD_LIBRARY_PATH=$ldPath
 export TMPDIR=$tmpDir
-$pgBinDir/initdb -D $dataDir -L $baseDir/share/postgresql --auth=trust --username=hindsight --no-locale --no-clean 2>&1 || true
+# Create wrapper scripts so initdb can find "postgres" when it forks
+mkdir -p $pgBinDir/wrappers
+for cmd in postgres initdb createdb psql pg_isready pg_ctl; do
+    echo "#!/system/bin/sh" > $pgBinDir/wrappers/${'$'}cmd
+    echo "exec $nativeDir/lib${'$'}{cmd}.so \"\${'$'}@\"" >> $pgBinDir/wrappers/${'$'}cmd
+    chmod 755 $pgBinDir/wrappers/${'$'}cmd
+done
+export PATH=$pgBinDir/wrappers:${'$'}PATH
+# initdb needs "postgres" binary in its dir. Create wrappers with correct names.
+$nativeDir/libinitdb.so -D $dataDir -L $baseDir/share/postgresql --auth=trust --username=hindsight --no-locale --no-clean 2>&1 || true
 echo "SETUP_DONE"
 """)
         setupScript.setExecutable(true, false)
@@ -161,36 +173,19 @@ listen_addresses = ''
 unix_socket_directories = '$tmpDir'
 """.trimIndent())
 
-        // PG has the Termux share path hardcoded. Try to create it, or binary-patch.
-        // On test devices, /data/data/com.termux doesn't exist, so we can create it.
-        val termuxShareDir = "/data/data/com.termux/files/usr/share/postgresql"
-        val termuxLibDir = "/data/data/com.termux/files/usr/lib"
-        exec("/system/bin/sh", "-c",
-            "mkdir -p $termuxShareDir && cp -r $baseDir/share/postgresql/* $termuxShareDir/ && " +
-            "mkdir -p $termuxLibDir && cp $baseDir/lib/*.so* $termuxLibDir/ 2>/dev/null; " +
-            "mkdir -p $termuxLibDir/postgresql && cp $baseDir/lib/postgresql/*.so* $termuxLibDir/postgresql/ 2>/dev/null; " +
-            "echo TERMUX_DIR_CREATED",
+        // PG binaries are patched to look for share/lib at /data/local/tmp/pgsql_hs_usr__/
+        // Create that directory and symlink our extracted data there
+        val prefixResult = exec("/system/bin/sh", "-c",
+            "mkdir -p $pgPrefix/share/postgresql 2>&1 && " +
+            "cp -r $baseDir/share/postgresql/* $pgPrefix/share/postgresql/ 2>&1 && " +
+            "mkdir -p $pgPrefix/lib 2>&1 && " +
+            "cp $baseDir/lib/*.so* $pgPrefix/lib/ 2>&1 && " +
+            "ls $pgPrefix/share/postgresql/postgres.bki 2>&1 && " +
+            "echo PREFIX_OK",
             env = emptyMap()
         )
-        Log.i(TAG, "Termux share dir: ${File("$termuxShareDir/postgres.bki").exists()}")
-
-        // Create share dir relative to nativeLibDir so PG's path resolution finds it
-        // PG resolves: <binary_dir>/../share/postgresql/
-        // nativeLibDir is like /data/app/.../lib/arm64
-        // So we need:       /data/app/.../lib/share/postgresql/ (one level up from arm64)
-        val nativeParent = File(nativeDir).parent ?: nativeDir
-        val nativeShareDir = "$nativeParent/share/postgresql"
-        File(nativeShareDir).mkdirs()
-        // Symlink our extracted share data there
-        exec("/system/bin/sh", "-c",
-            "ln -sf $baseDir/share/postgresql/* $nativeShareDir/ 2>&1 || cp -r $baseDir/share/postgresql/* $nativeShareDir/",
-            env = emptyMap()
-        )
-        Log.i(TAG, "Share dir linked at: $nativeShareDir (exists: ${File("$nativeShareDir/postgres.bki").exists()})")
-
-        // Also try creating at the pg-bin level: pg-bin/../share/postgresql
-        val pgBinShareDir = "$baseDir/share/postgresql"
-        Log.i(TAG, "Share dir at pgBin/../share: $pgBinShareDir (exists: ${File("$pgBinShareDir/postgres.bki").exists()})")
+        Log.i(TAG, "Prefix setup: ${prefixResult.takeLast(300)}")
+        Log.i(TAG, "PG prefix at $pgPrefix: share=${File("$pgPrefix/share/postgresql/postgres.bki").exists()}")
 
         // 4c: Run postgres --boot to execute bootstrap SQL
         val bootScript = File("$pgBinDir/boot.sh")
@@ -200,7 +195,8 @@ export TMPDIR=$tmpDir
 
 # Run bootstrap with postgres --boot
 # This reads postgres.bki from stdin and creates the system catalog
-$pgBinDir/postgres --boot -X 1048576 -F -c dynamic_shared_memory_type=mmap -D $dataDir < $baseDir/share/postgresql/postgres.bki 2>&1
+export PATH=$pgBinDir/wrappers:${'$'}PATH
+$nativeDir/libpostgres.so --boot -X 1048576 -F -c dynamic_shared_memory_type=mmap -D $dataDir < $baseDir/share/postgresql/postgres.bki 2>&1
 BOOT_EXIT=${'$'}?
 echo "BOOT_EXIT=${'$'}BOOT_EXIT"
 
@@ -209,12 +205,12 @@ if [ ${'$'}BOOT_EXIT -eq 0 ]; then
     for sql in system_constraints.sql system_functions.sql system_views.sql information_schema.sql; do
         if [ -f "$baseDir/share/postgresql/${'$'}sql" ]; then
             echo "Running ${'$'}sql..."
-            $pgBinDir/postgres --single -D $dataDir -c dynamic_shared_memory_type=mmap template1 < "$baseDir/share/postgresql/${'$'}sql" 2>&1 || true
+            $nativeDir/libpostgres.so --single -D $dataDir -c dynamic_shared_memory_type=mmap template1 < "$baseDir/share/postgresql/${'$'}sql" 2>&1 || true
         fi
     done
 
     # Create the default databases
-    $pgBinDir/postgres --single -D $dataDir -c dynamic_shared_memory_type=mmap template1 2>&1 <<EOSQL
+    $nativeDir/libpostgres.so --single -D $dataDir -c dynamic_shared_memory_type=mmap template1 2>&1 <<EOSQL
 CREATE DATABASE postgres;
 CREATE DATABASE hindsight;
 EOSQL
@@ -223,7 +219,7 @@ fi
 """)
         bootScript.setExecutable(true, false)
 
-        val bootResult = exec("/system/bin/sh", bootScript.absolutePath, env = pgEnvMap, timeoutMs = 300_000)
+        val bootResult = exec("/system/bin/sh", bootScript.absolutePath, env = pgEnvMap, timeoutMs = 2700_000)
         Log.i(TAG, "Boot result (${bootResult.length} chars): ${bootResult.takeLast(500)}")
 
         val pgControlExists = File("$dataDir/global/pg_control").exists()
@@ -245,7 +241,7 @@ fi
 
         // Start postgres directly (pg_ctl may not find the binary)
         val pgProcess = ProcessBuilder(
-            "$pgBinDir/postgres",
+            "$nativeDir/libpostgres.so",
             "-D", dataDir,
             "-k", tmpDir,
             "-p", "15432",
@@ -261,7 +257,7 @@ fi
         for (i in 1..30) {
             Thread.sleep(1000)
             val isReady = exec(
-                "$pgBinDir/pg_isready", "-h", tmpDir, "-p", "15432",
+                "$nativeDir/libpg_isready.so", "-h", tmpDir, "-p", "15432",
                 env = pgEnv
             )
             if (isReady.contains("accepting connections")) {
@@ -280,12 +276,12 @@ fi
         try {
             // Step 6: Create database
             Log.i(TAG, "Step 6: Creating database...")
-            exec("$pgBinDir/createdb", "-h", tmpDir, "-p", "15432", "-U", "hindsight", "hindsight", env = pgEnv)
+            exec("$nativeDir/libcreatedb.so", "-h", tmpDir, "-p", "15432", "-U", "hindsight", "hindsight", env = pgEnv)
 
             // Step 7: Test pgvector
             Log.i(TAG, "Step 7: Testing pgvector...")
             val vectorResult = exec(
-                "$pgBinDir/psql", "-h", tmpDir, "-p", "15432", "-U", "hindsight", "-d", "hindsight",
+                "$nativeDir/libpsql.so", "-h", tmpDir, "-p", "15432", "-U", "hindsight", "-d", "hindsight",
                 "-c", "CREATE EXTENSION IF NOT EXISTS vector; SELECT '[1,2,3]'::vector <-> '[4,5,6]'::vector AS distance;",
                 env = pgEnv
             )

@@ -1,4 +1,4 @@
-package io.vectorize.hindsight.android
+package io.hs.pgdb
 
 import android.os.Bundle
 import android.widget.Button
