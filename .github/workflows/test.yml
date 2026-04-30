@@ -1495,15 +1495,14 @@ jobs:
   # ship — the unit tests use the abstraction layer, but only the client
   # tests exercise full HTTP round-trips with real serialized payloads.
   #
-  # Gated behind the "oracle-tests" PR label, like test-api-oracle, since
-  # the container takes ~2min to start up and the Oracle Free image is
-  # network-heavy.
+  # Runs on every API/clients change (no label needed). The "oracle-tests"
+  # label is reserved for test-api-oracle — the full unit suite is too
+  # heavy to run on every PR.
   # -----------------------------------------------------------------
   test-python-client-oracle:
     needs: [detect-changes]
     if: >-
       needs.detect-changes.outputs.has_secrets == 'true' &&
-      contains(github.event.pull_request.labels.*.name, 'oracle-tests') &&
       ((github.event_name == 'pull_request_review' && github.event.review.state == 'approved') ||
       github.event_name == 'workflow_dispatch' ||
       needs.detect-changes.outputs.core == 'true' ||
@@ -1661,7 +1660,6 @@ jobs:
     needs: [detect-changes]
     if: >-
       needs.detect-changes.outputs.has_secrets == 'true' &&
-      contains(github.event.pull_request.labels.*.name, 'oracle-tests') &&
       ((github.event_name == 'pull_request_review' && github.event.review.state == 'approved') ||
       github.event_name == 'workflow_dispatch' ||
       needs.detect-changes.outputs.core == 'true' ||
