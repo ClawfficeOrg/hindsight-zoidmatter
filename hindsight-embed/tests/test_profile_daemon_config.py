@@ -554,3 +554,29 @@ def test_configure_from_env_omits_model_when_unset(temp_home, monkeypatch):
     assert "HINDSIGHT_API_LLM_MODEL" not in contents, (
         "model line must be omitted when the user didn't set one, so the daemon picks the provider default"
     )
+
+
+def test_configure_from_env_accepts_providers_outside_interactive_menu(temp_home, monkeypatch):
+    """Regression test for issue #1360.
+
+    `_do_configure_from_env` previously rejected any provider not in the small
+    interactive-menu set (`PROVIDER_API_KEYS` — 5 entries) with "Unknown
+    provider". hindsight-api supports ~18 providers (anthropic, claude-code,
+    bedrock, openrouter, ...), so the gate blocked valid CI configurations.
+    Validation belongs in the daemon, not in the CLI's UX-only menu list.
+    """
+    from hindsight_embed import cli
+
+    config_dir = temp_home / ".hindsight"
+    monkeypatch.setattr(cli, "CONFIG_DIR", config_dir)
+    monkeypatch.setattr(cli, "CONFIG_FILE", config_dir / "embed")
+
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("HINDSIGHT_API_LLM_API_KEY", "sk-ant-test")
+    monkeypatch.delenv("HINDSIGHT_API_LLM_MODEL", raising=False)
+
+    rc = cli._do_configure_from_env()
+    assert rc == 0, "anthropic must be accepted — the daemon validates providers, not the CLI"
+
+    contents = (config_dir / "embed").read_text()
+    assert "HINDSIGHT_API_LLM_PROVIDER=anthropic" in contents

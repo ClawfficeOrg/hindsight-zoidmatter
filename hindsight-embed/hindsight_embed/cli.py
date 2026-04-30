@@ -210,11 +210,10 @@ def _do_configure_from_env():
     api_key = os.environ.get("HINDSIGHT_API_LLM_API_KEY") or os.environ.get("OPENAI_API_KEY")
     provider = os.environ.get("HINDSIGHT_API_LLM_PROVIDER", "openai")
 
-    if provider not in PROVIDER_API_KEYS:
-        print(
-            f"Error: Unknown provider '{provider}'. Supported: {', '.join(PROVIDER_API_KEYS.keys())}", file=sys.stderr
-        )
-        return 1
+    # Don't gate on PROVIDER_API_KEYS — that's only the interactive-menu set
+    # (5 entries). hindsight-api's PROVIDER_DEFAULT_MODELS supports ~18
+    # providers (anthropic, claude-code, bedrock, openrouter, ...). Let the
+    # daemon validate; rejecting here would block valid configurations.
 
     # Check for API key (required for non-ollama and non-vertexai providers)
     # vertexai uses GCP service account credentials instead of an API key
