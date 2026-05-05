@@ -918,6 +918,11 @@ async function main() {
         mkdirSync(join(destPath, ".."), { recursive: true });
         writeFileSync(destPath, readFileSync(join(dir, relPath), "utf-8"));
       }
+      // Copy bank-template.json if present (has mental model definitions)
+      const templateSrc = join(dir, "bank-template.json");
+      if (existsSync(templateSrc)) {
+        writeFileSync(join(contentDir, "bank-template.json"), readFileSync(templateSrc, "utf-8"));
+      }
       p.log.success(`Content saved to ${color.dim(contentDir)} (${contentFiles.length} files)`);
 
       // Auto-approve hindsight MCP tools and skills in user settings
@@ -950,7 +955,10 @@ async function main() {
         p.log.success("Auto-approved hindsight tools in Claude Code");
       }
 
-      const prompt = `Use /hindsight-memory:create-agent to create a "${agentId}" agent. Then ingest all files from ${contentDir}/ and create 3 knowledge pages that make sense based on the content.`;
+      const hasBankTemplate = existsSync(join(contentDir, "bank-template.json"));
+      const prompt = hasBankTemplate
+        ? `Use /hindsight-memory:create-agent to create a "${agentId}" agent. Then ingest all files from ${contentDir}/ (skip bank-template.json). Read ${contentDir}/bank-template.json and create the exact mental models (knowledge pages) defined in its "mental_models" array using agent_knowledge_create_page for each one.`
+        : `Use /hindsight-memory:create-agent to create a "${agentId}" agent. Then ingest all files from ${contentDir}/ and create 3 knowledge pages that make sense based on the content.`;
 
       p.note(
         [
