@@ -26,17 +26,20 @@ pytestmark = pytest.mark.hs_llm_mat
 _PROVIDER = os.environ.get("HINDSIGHT_API_LLM_PROVIDER", "")
 _MODEL = os.environ.get("HINDSIGHT_API_LLM_MODEL", "")
 
-PROVIDER_KEY_MAP = {
-    "openai": "OPENAI_API_KEY",
-    "anthropic": "ANTHROPIC_API_KEY",
-    "groq": "GROQ_API_KEY",
-    "gemini": "GEMINI_API_KEY",
-    "deepseek": "DEEPSEEK_API_KEY",
-}
-
-
 def _get_api_key() -> str:
-    env_var = PROVIDER_KEY_MAP.get(_PROVIDER, "")
+    """Get API key from HINDSIGHT_API_LLM_API_KEY (CI) or provider-specific env var."""
+    key = os.environ.get("HINDSIGHT_API_LLM_API_KEY", "")
+    if key:
+        return key
+    # Fallback to provider-specific env vars for local dev
+    provider_key_map = {
+        "openai": "OPENAI_API_KEY",
+        "anthropic": "ANTHROPIC_API_KEY",
+        "groq": "GROQ_API_KEY",
+        "gemini": "GEMINI_API_KEY",
+        "deepseek": "DEEPSEEK_API_KEY",
+    }
+    env_var = provider_key_map.get(_PROVIDER, "")
     return os.environ.get(env_var, "") if env_var else ""
 
 
