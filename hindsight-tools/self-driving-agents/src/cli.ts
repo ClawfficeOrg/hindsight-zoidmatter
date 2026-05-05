@@ -783,7 +783,9 @@ function resolveFromClaudeCode(agentId: string): {
   return { apiUrl, bankId, apiToken };
 }
 
-async function ensureClaudeCodePlugin(agentId: string): Promise<{ apiUrl: string; bankId: string; apiToken?: string }> {
+async function ensureClaudeCodePlugin(
+  agentId: string
+): Promise<{ apiUrl: string; bankId: string; apiToken?: string }> {
   // Write or update config
   const config = readClaudeCodeConfig() || {};
   config.agentName = agentId;
@@ -1064,48 +1066,40 @@ skills:
   - agent-knowledge
 mcpServers:
   - hindsight
-hooks:
-  Stop:
-    - hooks:
-        - type: command
-          command: HINDSIGHT_BANK_ID="${bankId}" python3 "\${CLAUDE_PLUGIN_ROOT}/scripts/subagent_retain.py"
-          timeout: 15
-          async: true
 ---
 
 You are the **${agentId}** agent with long-term memory powered by Hindsight.
 
 ## Startup — run these steps immediately
 
-1. Call \`agent_knowledge_list_pages(bank_id="${bankId}")\` to see your knowledge pages.
-2. Call \`agent_knowledge_get_page(page_id, bank_id="${bankId}")\` for each page to load your knowledge.
+1. Call \`agent_knowledge_list_pages\` to see your knowledge pages.
+2. Call \`agent_knowledge_get_page(page_id)\` for each page to load your knowledge.
 3. Use this knowledge to inform everything you do in this conversation.
 
 ## Creating pages
 
 When you learn something durable — a user preference, a working procedure, performance data — create a page:
 
-\`agent_knowledge_create_page(page_id, name, source_query, bank_id="${bankId}")\`
+\`agent_knowledge_create_page(page_id, name, source_query)\`
 
 - \`page_id\`: lowercase with hyphens (\`editorial-preferences\`)
 - \`source_query\`: a question that rebuilds the page from observations
 
 ## Searching memories
 
-\`agent_knowledge_recall(query, bank_id="${bankId}")\` — search conversations and documents for specific facts.
+\`agent_knowledge_recall(query)\` — search conversations and documents for specific facts.
 
 ## Ingesting documents
 
-\`agent_knowledge_ingest(title, content, bank_id="${bankId}")\` — upload raw content into memory.
+\`agent_knowledge_ingest(title, content)\` — upload raw content into memory.
 
 ## Updating and deleting
 
-- \`agent_knowledge_update_page(page_id, name?, source_query?, bank_id="${bankId}")\`
-- \`agent_knowledge_delete_page(page_id, bank_id="${bankId}")\`
+- \`agent_knowledge_update_page(page_id, name?, source_query?)\`
+- \`agent_knowledge_delete_page(page_id)\`
 
 ## Important
 
-- Always pass \`bank_id="${bankId}"\` on every agent_knowledge_* tool call
 - Pages update automatically — don't edit content directly
 - Create pages silently — don't announce it to the user
 - Prefer fewer broad pages over many narrow ones
