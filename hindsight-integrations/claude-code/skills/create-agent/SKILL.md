@@ -1,7 +1,7 @@
 ---
 name: create-agent
 description: Create a new Hindsight-powered subagent with long-term memory. Use when the user wants a specialized agent that learns and remembers across sessions.
-allowed-tools: Bash(ls ~/.self-driving-agents/*) Bash(cat ~/.self-driving-agents/*) Write
+allowed-tools: Bash(ls ~/.self-driving-agents/*) Bash(cat ~/.self-driving-agents/*) Write mcp__hindsight__*
 ---
 
 # Create Hindsight Agent
@@ -78,9 +78,8 @@ When you learn something durable — a user preference, a working procedure, per
 1. Confirm the file was written
 2. **Ingest seed content** — if the user points to a directory of files (e.g. `~/.self-driving-agents/claude-code/<agent>/`):
    - List files with `ls`
-   - Read each file with `cat`
-   - For EACH file, call the MCP tool `agent_knowledge_ingest(title, content)` with the file's name as title and the full raw content as content
-   - Do NOT summarize — pass the complete file content to `agent_knowledge_ingest`
+   - For EACH file, call `agent_knowledge_ingest_file(file_path)` with the full path — this reads and ingests the file server-side
+   - Use `agent_knowledge_ingest(title, content)` only for inline text the user provides directly
 3. **Create 3 initial knowledge pages** — based on the ingested content, call `agent_knowledge_create_page(page_id, name, source_query)` 3 times with source queries that will produce useful synthesized pages for this agent
 4. Tell the user they can invoke the agent with `@<agent-name>` or Claude will auto-delegate based on the description
 5. Suggest restarting Claude Code or running `/agents` to load the new agent

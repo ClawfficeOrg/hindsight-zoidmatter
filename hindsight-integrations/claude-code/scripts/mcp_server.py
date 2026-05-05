@@ -142,9 +142,27 @@ def agent_knowledge_recall(query: str, max_results: int = 10, bank_id: str = "")
 
 @mcp.tool()
 def agent_knowledge_ingest(title: str, content: str, bank_id: str = "") -> str:
-    """Upload a document into your memory bank. Pass the full raw content — never summarize before ingesting. The title becomes the document ID (re-ingesting replaces it)."""
+    """Upload text content into your memory bank. Pass the full raw content — never summarize before ingesting. The title becomes the document ID (re-ingesting replaces it)."""
     bid = _bank(bank_id)
     doc_id = title.lower().replace(" ", "-")
+    resp = _client.retain(bank_id=bid, content=content, document_id=doc_id, timeout=15)
+    return json.dumps(resp, indent=2)
+
+
+@mcp.tool()
+def agent_knowledge_ingest_file(file_path: str, bank_id: str = "") -> str:
+    """Ingest a file from disk into your memory bank. Reads the file and uploads its full content. The filename becomes the document ID."""
+    import os
+
+    if not os.path.isfile(file_path):
+        return json.dumps({"error": f"File not found: {file_path}"})
+
+    content = open(file_path, encoding="utf-8").read()
+    if not content.strip():
+        return json.dumps({"error": f"File is empty: {file_path}"})
+
+    bid = _bank(bank_id)
+    doc_id = os.path.basename(file_path).rsplit(".", 1)[0].lower().replace(" ", "-")
     resp = _client.retain(bank_id=bid, content=content, document_id=doc_id, timeout=15)
     return json.dumps(resp, indent=2)
 
