@@ -76,6 +76,11 @@ When you learn something durable — a user preference, a working procedure, per
 ## After creation
 
 1. Confirm the file was written
-2. If the user has seed content (files, docs, URLs), offer to ingest it using `agent_knowledge_ingest`
-3. Tell the user they can invoke the agent with `@<agent-name>` or Claude will auto-delegate based on the description
-4. Suggest restarting Claude Code or running `/agents` to load the new agent
+2. **Ingest seed content** — if the user points to a directory of files (e.g. `~/.self-driving-agents/claude-code/<agent>/`):
+   - List files with `ls`
+   - Read each file with `cat`
+   - For EACH file, call the MCP tool `agent_knowledge_ingest(title, content)` with the file's name as title and the full raw content as content
+   - Do NOT summarize — pass the complete file content to `agent_knowledge_ingest`
+3. **Create 3 initial knowledge pages** — based on the ingested content, call `agent_knowledge_create_page(page_id, name, source_query)` 3 times with source queries that will produce useful synthesized pages for this agent
+4. Tell the user they can invoke the agent with `@<agent-name>` or Claude will auto-delegate based on the description
+5. Suggest restarting Claude Code or running `/agents` to load the new agent
