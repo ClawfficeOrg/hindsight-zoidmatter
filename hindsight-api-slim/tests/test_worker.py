@@ -2759,6 +2759,139 @@ class TestClaimBatchRotation:
         assert serviced == ["b", "b", "b"]
 
     @pytest.mark.asyncio
+    async def test_detect_marker_features_when_absent(self, pool, backend):
+        """Returns (False, False) on a deployment without the marker table or
+        helper function, and caches the result so subsequent calls are free.
+
+        Regression guard for issue #1408: prior to feature detection, the
+        worker called ``schemas_with_pending_work()`` unconditionally and
+        relied on a Python ``except Exception: pass`` to suppress the error.
+        Postgres still logged a server-side ``ERROR: function ... does not
+        exist`` on every poll, which spammed PG logs on fresh installs.
+        """
+        from hindsight_api.worker import WorkerPoller
+
+        # Make sure neither helper is present.
+        await pool.execute("DROP TABLE IF EXISTS public.tenant_has_work")
+        await pool.execute("DROP FUNCTION IF EXISTS public.schemas_with_pending_work()")
+
+        poller = WorkerPoller(backend=backend, worker_id="test-detect-absent", executor=lambda x: None)
+
+        async with backend.acquire() as conn:
+            assert await poller._detect_marker_features(conn) == (False, False)
+        # Cache populated; second call must not re-query (we monkey-patch the
+        # connection to fail if it's used).
+
+        class _ExplodingConn:
+            async def fetchrow(self, *_a, **_kw):
+                raise AssertionError("_detect_marker_features should be cached")
+
+        assert await poller._detect_marker_features(_ExplodingConn()) == (False, False)
+
+    @pytest.mark.asyncio
+    async def test_detect_marker_features_when_present(self, pool, backend):
+        """Both objects detected when installed."""
+        from hindsight_api.worker import WorkerPoller
+
+        await pool.execute(
+            """
+            CREATE TABLE IF NOT EXISTS public.tenant_has_work (
+                nspname text PRIMARY KEY,
+                pending_count integer NOT NULL DEFAULT 0 CHECK (pending_count >= 0)
+            )
+            """
+        )
+        await pool.execute(
+            """
+            CREATE OR REPLACE FUNCTION public.schemas_with_pending_work()
+            RETURNS SETOF text AS $$
+                SELECT nspname FROM public.tenant_has_work WHERE pending_count > 0;
+            $$ LANGUAGE sql STABLE
+            """
+        )
+        try:
+            poller = WorkerPoller(backend=backend, worker_id="test-detect-present", executor=lambda x: None)
+            async with backend.acquire() as conn:
+                assert await poller._detect_marker_features(conn) == (True, True)
+        finally:
+            await pool.execute("DROP FUNCTION IF EXISTS public.schemas_with_pending_work()")
+            await pool.execute("DROP TABLE IF EXISTS public.tenant_has_work")
+
+    @pytest.mark.asyncio
+    async def test_scan_skips_missing_function_call(self, pool, backend, clean_operations):
+        """When ``schemas_with_pending_work()`` is not installed,
+        ``_scan_active_schemas`` must not call it — even with a Python
+        ``except``, the server-side error log still fires (issue #1408).
+
+        We verify the new code path returns the correct result via the
+        per-schema EXISTS fallback, without ever issuing the function call.
+        """
+        from hindsight_api.worker import WorkerPoller
+
+        await pool.execute("DROP FUNCTION IF EXISTS public.schemas_with_pending_work()")
+
+        bank_id = f"test-worker-noisefree-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, bank_id)
+
+        op_id = uuid.uuid4()
+        await pool.execute(
+            """INSERT INTO async_operations
+               (operation_id, bank_id, operation_type, status, task_payload)
+               VALUES ($1, $2, 'test', 'pending', $3::jsonb)""",
+            op_id,
+            bank_id,
+            json.dumps({"type": "test", "bank_id": bank_id}),
+        )
+        try:
+            poller = WorkerPoller(
+                backend=backend, worker_id="test-noise", executor=lambda x: None
+            )
+
+            # Wrap fetch to assert the missing function is never called.
+            original_acquire = backend.acquire
+
+            class _NoFnCallConn:
+                def __init__(self, real):
+                    self._real = real
+
+                async def fetch(self, query, *args, **kwargs):
+                    assert "schemas_with_pending_work" not in query, (
+                        "Worker called missing function — would spam PG logs"
+                    )
+                    return await self._real.fetch(query, *args, **kwargs)
+
+                async def fetchval(self, *a, **kw):
+                    return await self._real.fetchval(*a, **kw)
+
+                async def fetchrow(self, *a, **kw):
+                    return await self._real.fetchrow(*a, **kw)
+
+            class _AcquireWrapper:
+                def __init__(self, inner):
+                    self._inner = inner
+                    self._cm = None
+
+                async def __aenter__(self):
+                    self._cm = self._inner
+                    real = await self._cm.__aenter__()
+                    return _NoFnCallConn(real)
+
+                async def __aexit__(self, *exc):
+                    return await self._cm.__aexit__(*exc)
+
+            def fake_acquire(*a, **kw):
+                return _AcquireWrapper(original_acquire(*a, **kw))
+
+            backend.acquire = fake_acquire  # type: ignore[method-assign]
+            try:
+                result = await poller._scan_active_schemas([None])
+                assert None in result
+            finally:
+                backend.acquire = original_acquire  # type: ignore[method-assign]
+        finally:
+            await pool.execute("DELETE FROM async_operations WHERE operation_id = $1", op_id)
+
+    @pytest.mark.asyncio
     async def test_scan_finds_schemas_with_pending_work(self, pool, backend, clean_operations):
         """_scan_active_schemas identifies schemas with pending rows
         and ignores empty schemas. Uses real DB, no mocks.

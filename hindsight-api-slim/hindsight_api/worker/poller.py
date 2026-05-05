@@ -150,6 +150,58 @@ class WorkerPoller:
         # Rotation offset for per-tenant fair claiming. Advances past the last
         # schema we serviced so a busy tenant can't monopolize the poll order.
         self._next_schema_idx: int = 0
+        # Cached one-shot detection of optional Postgres helper objects. None
+        # means "not yet checked"; otherwise (has_tenant_has_work_table,
+        # has_schemas_with_pending_work_function).
+        self._marker_features: tuple[bool, bool] | None = None
+
+    async def _detect_marker_features(self, conn) -> tuple[bool, bool]:
+        """Check once whether optional pending-work helpers are installed.
+
+        Returns ``(has_table, has_function)`` where:
+          * ``has_table``  — ``public.tenant_has_work`` exists
+          * ``has_function`` — ``public.schemas_with_pending_work()`` exists
+
+        Both are installed by hindsight deployments that maintain a marker
+        table via row triggers on ``tenant_%.async_operations``. Self-hosted
+        single-tenant deployments typically have neither, and that's fine —
+        callers fall back to a direct query against the default schema.
+
+        Cached for the worker's lifetime: a feature can't appear without a
+        deployment-level action (DDL / Helm hook), and re-checking on every
+        poll would defeat the point of the caching. If your deployment installs
+        the helpers later, restart the worker.
+
+        Non-PostgreSQL backends always return ``(False, False)`` — the helpers
+        are PG-specific.
+        """
+        if self._marker_features is not None:
+            return self._marker_features
+        if self._backend.backend_type != "postgresql":
+            self._marker_features = (False, False)
+            return self._marker_features
+        try:
+            row = await conn.fetchrow(
+                """
+                SELECT
+                  EXISTS(
+                    SELECT 1 FROM pg_class c
+                    JOIN pg_namespace n ON n.oid = c.relnamespace
+                    WHERE n.nspname = 'public' AND c.relname = 'tenant_has_work'
+                  ) AS has_table,
+                  EXISTS(
+                    SELECT 1 FROM pg_proc p
+                    JOIN pg_namespace n ON n.oid = p.pronamespace
+                    WHERE n.nspname = 'public' AND p.proname = 'schemas_with_pending_work'
+                  ) AS has_fn
+                """
+            )
+            self._marker_features = (bool(row["has_table"]), bool(row["has_fn"]))
+        except Exception:
+            # If even this catalog query fails, assume nothing is available
+            # rather than retrying on every poll.
+            self._marker_features = (False, False)
+        return self._marker_features
 
     async def _get_schemas(self) -> list[str | None]:
         """Get list of schemas to poll. Returns [None] for default schema (no prefix)."""
@@ -192,11 +244,13 @@ class WorkerPoller:
         job alongside ``total_pending_tasks()``.
         """
         async with self._backend.acquire() as conn:
-            # The schemas_with_pending_work() PL/pgSQL function is a
-            # PostgreSQL-specific optimisation installed by Helm hooks in
-            # hindsight-cloud. Skip on non-PG backends to avoid constant
-            # ORA-00904 / syntax errors on every poll cycle.
-            if self._backend.backend_type == "postgresql":
+            # Use the optional helper function when it's installed (one cached
+            # pg_proc lookup decides). Calling it unconditionally and swallowing
+            # the exception in Python still produces a server-side
+            # ``ERROR: function ... does not exist`` log on every poll, which
+            # spams Postgres logs on fresh installs (see issue #1408).
+            _, has_fn = await self._detect_marker_features(conn)
+            if has_fn:
                 try:
                     rows = await conn.fetch("SELECT * FROM schemas_with_pending_work()")
                     return {r[0] for r in rows}
@@ -959,15 +1013,60 @@ class WorkerPoller:
             if len(processing_info) > 10:
                 processing_str += f" +{len(processing_info) - 10} more"
 
-            # Get global stats from DB
-            schemas = await self._get_schemas()
+            # Get global stats from DB.
+            #
+            # Historically this iterated every tenant schema and ran two
+            # COUNT/GROUP BY queries against ``async_operations`` in each — i.e.
+            # 2*N queries per stats cycle per worker. With many tenants and
+            # multiple worker pods that fanout dominates DB load and bloats
+            # each pooled backend's catalog/plan cache (one entry per touched
+            # relation, never evicted).
+            #
+            # When the optional ``public.tenant_has_work`` marker table is
+            # installed (trigger-maintained, see helm/worker-pending-fn-job),
+            # we read it directly: O(1) regardless of tenant count, and the
+            # per-tenant breakdown queries only run for schemas that actually
+            # have pending rows.
+            #
+            # When the marker isn't installed (single-tenant or other self-
+            # hosted setups) we fall back to scanning the schemas the tenant
+            # extension knows about — typically just ``[None]`` (default
+            # schema), which costs the same two queries as before.
             global_pending = 0
             all_worker_counts: dict[str, int] = {}
             # operation_type -> aggregated bucket counts across schemas
             pending_breakdown: dict[str, dict[str, int]] = {}
 
             async with self._backend.acquire() as conn:
-                for schema in schemas:
+                has_table, _ = await self._detect_marker_features(conn)
+
+                pending_schemas: set[str | None] = set()
+                if has_table:
+                    rows = await conn.fetch(
+                        "SELECT nspname, pending_count "
+                        "FROM public.tenant_has_work WHERE pending_count > 0"
+                    )
+                    for r in rows:
+                        pending_schemas.add(r["nspname"])
+                        global_pending += int(r["pending_count"])
+                    # Marker triggers cover ``tenant_%.async_operations``; the
+                    # default (None) schema is invisible to them. Include it
+                    # whenever the tenant extension knows about it so single-
+                    # tenant or hybrid deployments don't silently miss work.
+                    if None in await self._get_schemas():
+                        pending_schemas.add(None)
+                else:
+                    pending_schemas = set(await self._get_schemas())
+
+                # Per-worker counts come from ``status = 'processing'`` rows,
+                # which the marker table doesn't track. Make sure the loop
+                # below visits any schema this worker is processing in so the
+                # ``others:`` line in the log stays meaningful.
+                schemas_to_scan = list(
+                    pending_schemas | {info.schema for info in active_tasks.values()}
+                )
+
+                for schema in schemas_to_scan:
                     table = fq_table("async_operations", schema)
 
                     # Bucket pending rows by the same predicates the claim query
@@ -976,20 +1075,24 @@ class WorkerPoller:
                     # retry backoff, etc.).
                     # Use SUM(CASE WHEN ...) instead of COUNT(*) FILTER (WHERE ...)
                     # for Oracle compatibility — FILTER is PG-specific.
-                    breakdown_rows = await conn.fetch(
-                        f"""
-                        SELECT
-                            operation_type,
-                            COUNT(*) AS total,
-                            SUM(CASE WHEN task_payload IS NULL THEN 1 ELSE 0 END) AS payload_null,
-                            SUM(CASE WHEN next_retry_at IS NOT NULL AND next_retry_at > now()
-                                THEN 1 ELSE 0 END) AS retry_blocked,
-                            SUM(CASE WHEN worker_id IS NOT NULL THEN 1 ELSE 0 END) AS assigned
-                        FROM {table}
-                        WHERE status = 'pending'
-                        GROUP BY operation_type
-                        """
-                    )
+                    try:
+                        breakdown_rows = await conn.fetch(
+                            f"""
+                            SELECT
+                                operation_type,
+                                COUNT(*) AS total,
+                                SUM(CASE WHEN task_payload IS NULL THEN 1 ELSE 0 END) AS payload_null,
+                                SUM(CASE WHEN next_retry_at IS NOT NULL AND next_retry_at > now()
+                                    THEN 1 ELSE 0 END) AS retry_blocked,
+                                SUM(CASE WHEN worker_id IS NOT NULL THEN 1 ELSE 0 END) AS assigned
+                            FROM {table}
+                            WHERE status = 'pending'
+                            GROUP BY operation_type
+                            """
+                        )
+                    except Exception:
+                        # Half-provisioned tenant (no async_operations table yet).
+                        breakdown_rows = []
                     for br in breakdown_rows:
                         op_type = br["operation_type"] or "unknown"
                         bucket = pending_breakdown.setdefault(
@@ -999,16 +1102,22 @@ class WorkerPoller:
                         bucket["payload_null"] += br["payload_null"]
                         bucket["retry_blocked"] += br["retry_blocked"]
                         bucket["assigned"] += br["assigned"]
-                        global_pending += br["total"]
+                        if not has_table:
+                            # Marker already gave us the global total; only
+                            # accumulate from the breakdown in the fallback path.
+                            global_pending += br["total"]
 
-                    worker_rows = await conn.fetch(
-                        f"""
-                        SELECT worker_id, COUNT(*) as count
-                        FROM {table}
-                        WHERE status = 'processing'
-                        GROUP BY worker_id
-                        """
-                    )
+                    try:
+                        worker_rows = await conn.fetch(
+                            f"""
+                            SELECT worker_id, COUNT(*) as count
+                            FROM {table}
+                            WHERE status = 'processing'
+                            GROUP BY worker_id
+                            """
+                        )
+                    except Exception:
+                        worker_rows = []
                     for wr in worker_rows:
                         wid = wr["worker_id"] or "unknown"
                         all_worker_counts[wid] = all_worker_counts.get(wid, 0) + wr["count"]
@@ -1024,8 +1133,13 @@ class WorkerPoller:
             pool_str = self._format_pool_stats()
             proc_str = self._format_proc_stats()
 
-            # Display None as "default" in logs
-            schemas_str = ", ".join(s if s else "default" for s in schemas)
+            # Display None as "default" in logs. Cap the rendered list so the
+            # line stays readable when many tenants have pending work.
+            schema_labels = sorted(s if s else "default" for s in schemas_to_scan)
+            if len(schema_labels) > 20:
+                schemas_str = ", ".join(schema_labels[:20]) + f", +{len(schema_labels) - 20} more"
+            else:
+                schemas_str = ", ".join(schema_labels) if schema_labels else "none"
             logger.info(
                 f"[WORKER_STATS] worker={self._worker_id} "
                 f"slots={in_flight}/{self._max_slots} | "
