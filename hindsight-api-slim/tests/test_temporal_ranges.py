@@ -115,7 +115,7 @@ async def test_temporal_ranges_are_written(memory_real_llm, request_context):
 
     # Test search results also include temporal fields
     print("\n=== Testing Search Results ===")
-    search_result = await memory.recall_async(
+    search_result = await memory_real_llm.recall_async(
         bank_id=bank_id,
         query="pottery workshop",
         fact_type=["world", "experience"],

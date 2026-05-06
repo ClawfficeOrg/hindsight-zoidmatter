@@ -20,15 +20,6 @@ async def api_client(memory):
         yield client
 
 
-@pytest_asyncio.fixture
-async def api_client_real_llm(memory_real_llm):
-    """Create an async test client backed by a real LLM provider."""
-    app = create_app(memory_real_llm, initialize_memory=False)
-    transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        yield client
-
-
 @pytest.fixture
 def test_bank_id():
     """Provide a unique bank ID for this test run."""

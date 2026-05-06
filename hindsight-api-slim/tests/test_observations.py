@@ -204,22 +204,21 @@ async def test_entity_mention_counts(memory, request_context):
 
     try:
         # Create content with varying entity mention counts:
-        # - "HighMention Corp" mentioned 10+ times
-        # - "LowMention Ltd" mentioned 1 time
+        # - "Nexora" mentioned 10 times
+        # - "Trivex" mentioned 1 time
         contents = [
-            # High mentions - HighMention Corp
-            "HighMention Corp is a tech company based in San Francisco.",
-            "HighMention Corp was founded in 2010 by experienced entrepreneurs.",
-            "HighMention Corp has over 500 employees worldwide.",
-            "HighMention Corp specializes in cloud computing solutions.",
-            "HighMention Corp recently raised $50 million in Series C funding.",
-            "HighMention Corp has partnerships with major tech companies.",
-            "HighMention Corp is known for its innovative culture.",
-            "HighMention Corp offers competitive salaries and benefits.",
-            "HighMention Corp has offices in 5 countries.",
-            "HighMention Corp won the best workplace award last year.",
-            # Low mentions - LowMention Ltd
-            "LowMention Ltd is a small consulting firm.",
+            "Nexora is a tech company based in San Francisco.",
+            "Nexora was founded in 2010 by experienced entrepreneurs.",
+            "Nexora has over 500 employees worldwide.",
+            "Nexora specializes in cloud computing solutions.",
+            "Nexora recently raised $50 million in Series C funding.",
+            "Nexora has partnerships with major tech companies.",
+            "Nexora is known for its innovative culture.",
+            "Nexora offers competitive salaries and benefits.",
+            "Nexora has offices in 5 countries.",
+            "Nexora won the best workplace award last year.",
+            # Low mentions
+            "Trivex is a small consulting firm.",
         ]
 
         for i, content in enumerate(contents):
@@ -259,16 +258,18 @@ async def test_entity_mention_counts(memory, request_context):
 
             print(f"  {entity['canonical_name']}: mentions={mention_count}")
 
-            if "highmention" in name:
+            if "nexora" in name:
                 high_mention_entity = entity
-            elif "lowmention" in name:
+            elif "trivex" in name:
                 low_mention_entity = entity
 
-        # Verify HighMention Corp has higher mention count
-        if high_mention_entity and low_mention_entity:
-            assert high_mention_entity['mention_count'] > low_mention_entity['mention_count'], \
-                "HighMention Corp should have more mentions than LowMention Ltd"
-            print("PASS: Entity mention counts are tracked correctly")
+        # Both entities must exist
+        assert high_mention_entity is not None, "Nexora entity should exist"
+        assert low_mention_entity is not None, "Trivex entity should exist"
+
+        # Nexora (10 mentions) must rank higher than Trivex (1 mention)
+        assert high_mention_entity['mention_count'] > low_mention_entity['mention_count'], \
+            f"Nexora ({high_mention_entity['mention_count']} mentions) should have more than Trivex ({low_mention_entity['mention_count']} mentions)"
 
     finally:
         # Cleanup

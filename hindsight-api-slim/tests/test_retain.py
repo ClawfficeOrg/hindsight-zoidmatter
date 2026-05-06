@@ -13,7 +13,6 @@ from hindsight_api.engine.memory_engine import Budget
 logger = logging.getLogger(__name__)
 
 
-@pytest.mark.hs_llm_mat
 @pytest.mark.asyncio
 async def test_retain_with_chunks(memory, request_context):
     """
