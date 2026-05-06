@@ -20,6 +20,15 @@ async def api_client(memory):
         yield client
 
 
+@pytest_asyncio.fixture
+async def api_client_real_llm(memory_real_llm):
+    """Create an async test client backed by a real LLM provider."""
+    app = create_app(memory_real_llm, initialize_memory=False)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        yield client
+
+
 @pytest.fixture
 def test_bank_id():
     """Provide a unique bank ID for this test run."""
@@ -1416,3 +1425,120 @@ async def test_unknown_params_not_rejected(api_client):
     )
     assert response.status_code == 200
     assert "X-Ignored-Params" not in response.headers
+
+
+@pytest.mark.hs_llm_core
+@pytest.mark.asyncio
+async def test_full_api_workflow_llm_quality(api_client_real_llm):
+    """Test that reflect produces relevant answers mentioning stored entities.
+
+    This is the hs_llm_core counterpart of test_full_api_workflow — the mock
+    version verifies API plumbing, this one verifies the LLM actually reasons
+    over the stored memories and produces a relevant answer.
+    """
+    test_bank_id = f"llm_workflow_{datetime.now().timestamp()}"
+
+    # Store memories about people
+    response = await api_client_real_llm.post(
+        f"/v1/default/banks/{test_bank_id}/memories",
+        json={
+            "items": [
+                {
+                    "content": "Alice is a machine learning researcher at Stanford.",
+                    "context": "team introduction",
+                },
+                {
+                    "content": "Bob leads the infrastructure team and loves Kubernetes.",
+                    "context": "team introduction",
+                },
+            ]
+        },
+    )
+    assert response.status_code == 200
+
+    # Reflect and verify the LLM mentions stored entities
+    response = await api_client_real_llm.post(
+        f"/v1/default/banks/{test_bank_id}/reflect",
+        json={
+            "query": "What do you know about Alice?",
+            "thinking_budget": 30,
+        },
+    )
+    assert response.status_code == 200
+    result = response.json()
+    answer = result["text"].lower()
+    assert "alice" in answer, f"LLM should mention Alice in response, got: {answer[:200]}"
+
+    # Cleanup
+    await api_client_real_llm.delete(f"/v1/default/banks/{test_bank_id}")
+
+
+@pytest.mark.hs_llm_core
+@pytest.mark.asyncio
+async def test_reflect_structured_output_llm_quality(api_client_real_llm):
+    """Test that structured output respects the provided JSON schema keys.
+
+    This is the hs_llm_core counterpart of test_reflect_structured_output — the
+    mock version verifies the endpoint returns a dict, this one verifies the LLM
+    actually populates the schema-required keys (team_members, summary).
+    """
+    test_bank_id = f"llm_structured_{datetime.now().timestamp()}"
+
+    # Store memories
+    response = await api_client_real_llm.post(
+        f"/v1/default/banks/{test_bank_id}/memories",
+        json={
+            "items": [
+                {
+                    "content": "Alice is a senior machine learning engineer with 8 years of experience.",
+                    "context": "team member info",
+                },
+                {
+                    "content": "Bob is a junior data scientist who joined last month.",
+                    "context": "team member info",
+                },
+            ]
+        },
+    )
+    assert response.status_code == 200
+
+    response_schema = {
+        "type": "object",
+        "properties": {
+            "team_members": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "role": {"type": "string"},
+                        "experience_level": {"type": "string"},
+                    },
+                },
+            },
+            "summary": {"type": "string"},
+        },
+        "required": ["team_members", "summary"],
+    }
+
+    response = await api_client_real_llm.post(
+        f"/v1/default/banks/{test_bank_id}/reflect",
+        json={
+            "query": "Give me an overview of the team",
+            "response_schema": response_schema,
+        },
+    )
+    assert response.status_code == 200
+    result = response.json()
+
+    assert "structured_output" in result
+    structured = result["structured_output"]
+    assert structured is not None
+    assert isinstance(structured, dict)
+    assert "team_members" in structured, f"structured_output missing 'team_members': {structured}"
+    assert "summary" in structured, f"structured_output missing 'summary': {structured}"
+    assert isinstance(structured["team_members"], list)
+    assert len(structured["team_members"]) > 0, "Should have at least one team member"
+
+    # Cleanup
+    await api_client_real_llm.delete(f"/v1/default/banks/{test_bank_id}")
