@@ -9,11 +9,11 @@ image: /img/blog/n8n-persistent-memory.png
 
 ![n8n Workflows Are Stateless. Hindsight Makes Them Compound.](/img/blog/n8n-persistent-memory.png)
 
-[n8n](https://n8n.io) is the connective tissue of modern automation. [Slack](https://api.slack.com), Gmail, Stripe, Notion, Sheets, [Zendesk](https://developer.zendesk.com), [Gong](https://gong.io), [OpenAI](https://platform.openai.com), Anthropic — 400+ integrations strung together by an open-source workflow engine you can self-host or run on n8n Cloud. If a thing has an API, the platform can probably wire it into a workflow.
+[n8n](https://n8n.io) is the connective tissue of modern automation. [Slack](https://api.slack.com), Gmail, Stripe, Notion, Sheets, [Zendesk](https://developer.zendesk.com), [Gong](https://gong.io), [OpenAI](https://platform.openai.com), Anthropic — 500+ integrations strung together by an open-source workflow engine you can self-host or run on n8n Cloud. If a thing has an API, the platform can probably wire it into a workflow.
 
 There has been one consistent gap. Every workflow run starts from zero. The workflow that just closed a Zendesk ticket has no idea that workflow ran yesterday. The sales-call summarizer doesn't know what was said on last week's call with the same prospect. The Slack bot that answers questions has no memory of the question it just answered five minutes ago.
 
-We just shipped a fix. **The Hindsight community node adds persistent memory to any n8n workflow with three operations — Retain, Recall, and Reflect.** Drop it in alongside any of the platform's other 400+ integrations and your workflows stop being stateless and start compounding.
+We just shipped a fix. **The Hindsight community node adds persistent memory to any n8n workflow with three operations — Retain, Recall, and Reflect.** Drop it in alongside any of the platform's other 500+ integrations and your workflows stop being stateless and start compounding.
 
 <!-- truncate -->
 
@@ -22,7 +22,7 @@ We just shipped a fix. **The Hindsight community node adds persistent memory to 
 - The new `@vectorize-io/n8n-nodes-hindsight` community node gives any n8n workflow access to Hindsight's persistent memory layer
 - One node, three operations: **Retain** (store), **Recall** (search), **Reflect** (LLM-synthesized answer)
 - Works with [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) or [self-hosted Hindsight](https://hindsight.vectorize.io/developer/installation)
-- Install today via Settings → Community Nodes on self-hosted n8n; **n8n Cloud install is pending Verified Node review** (~1 week)
+- Install today via Settings → Community Nodes on self-hosted n8n; **n8n Cloud install is pending Verified Node review**
 - Real-use examples below: support workflows that learn from every closed ticket, sales-call coaches that remember every prior touchpoint, Slack bots that build a continuous relationship with the user
 
 ---
@@ -115,7 +115,7 @@ After restart, the **Hindsight** node appears in the node panel.
 
 ### Install on n8n Cloud
 
-**This is the one piece we're still waiting on.** n8n Cloud only allows installing community nodes that have passed the [Verified Node review](https://docs.n8n.io/integrations/community-nodes/). We've submitted the Hindsight node to the [n8n Creator Portal](https://creators.n8n.io), including provenance-signed npm publishes from GitHub Actions (a hard requirement n8n added in May). Review takes around a week. Once approved, the node will appear in n8n Cloud's in-product node finder with a blue verified checkmark and install in one click. **We'll update this post when that lands.**
+**This is the one piece we're still waiting on.** n8n Cloud only allows installing community nodes that have passed the [Verified Node review](https://docs.n8n.io/integrations/community-nodes/). We've submitted the Hindsight node to the [n8n Creator Portal](https://creators.n8n.io), including provenance-signed npm publishes from GitHub Actions (a hard requirement n8n added in May). Review typically takes several weeks. Once approved, the node will appear in n8n Cloud's in-product node finder with a verification badge and install in one click. **We'll update this post when that lands.**
 
 ### Configure the credential
 
@@ -196,7 +196,7 @@ For multi-tenant workflows — a SaaS where every customer's automations should 
 
 The immediate roadmap on the n8n side has two pieces.
 
-**n8n Cloud install.** We've submitted the Hindsight node to the n8n Creator Portal and it's currently under Verified Node review (a process that takes about a week). Once approved, n8n Cloud users can install it directly from the in-product node finder, with a verified blue checkmark. The same node code, same operations, same docs — just one fewer step. We'll update this post and our docs when the review completes.
+**n8n Cloud install.** We've submitted the Hindsight node to the n8n Creator Portal and it's currently under Verified Node review (a process that typically takes several weeks). Once approved, n8n Cloud users can install it directly from the in-product node finder, with a verification badge. The same node code, same operations, same docs — just one fewer step. We'll update this post and our docs when the review completes.
 
 **More built-in patterns.** The three example workflows above are the obvious starting points. The patterns we expect to add next are: tag-aware retain templates (so Retain can take a structured payload and apply tags automatically), batch retain (for backfilling a bank from existing data), and a sub-workflow / template starter pack that ships ready-to-import workflow JSON for the most common shapes.
 
@@ -206,11 +206,11 @@ The immediate roadmap on the n8n side has two pieces.
 
 - n8n is the connective tissue of automation, but workflows are stateless by default
 - The new Hindsight community node closes that gap with three operations: Retain, Recall, Reflect
-- Drop it into any workflow alongside the 400+ apps n8n connects to, and the workflow starts compounding instead of resetting
+- Drop it into any workflow alongside the 500+ apps n8n connects to, and the workflow starts compounding instead of resetting
 - Self-hosted n8n: install today via Settings → Community Nodes
 - n8n Cloud: pending Verified Node approval; we'll update when it lands
 
-If you've been building automations in n8n that involve any LLM step, any customer-facing surface, or anything that should get smarter with use — the memory layer is the missing piece. One node, three operations, your entire workflow graph plus 400+ integrations.
+If you've been building automations in n8n that involve any LLM step, any customer-facing surface, or anything that should get smarter with use — the memory layer is the missing piece. One node, three operations, your entire workflow graph plus 500+ integrations.
 
 ---
 
