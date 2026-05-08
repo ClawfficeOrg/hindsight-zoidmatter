@@ -103,7 +103,7 @@ Each provider has a recommended default model that's used when `HINDSIGHT_API_LL
 | `llamacpp` | `gemma-4-e2b-it` (auto-downloaded GGUF) |
 | `minimax` | `MiniMax-M2.7` |
 | `deepseek` | `deepseek-v4-flash` |
-| `zai` | `glm-4.5-air` |
+| `zai` | `glm-4.5-flash` |
 | `volcano` | `doubao-pro-32k` |
 | `openrouter` | `qwen/qwen3.5-9b` |
 | `openai-codex` | `gpt-5.4-mini` |
@@ -198,7 +198,7 @@ export HINDSIGHT_API_LLM_MODEL=deepseek-v4-flash  # or deepseek-v4-pro / deepsee
 # z.ai (Zhipu GLM series, OpenAI-compatible, https://z.ai)
 export HINDSIGHT_API_LLM_PROVIDER=zai
 export HINDSIGHT_API_LLM_API_KEY=your-zai-api-key
-export HINDSIGHT_API_LLM_MODEL=glm-4.5-air
+export HINDSIGHT_API_LLM_MODEL=glm-4.5-flash  # or glm-4.5-air for the paid tier
 
 # Vertex AI (Google Cloud)
 export HINDSIGHT_API_LLM_PROVIDER=vertexai

@@ -284,7 +284,7 @@ export HINDSIGHT_API_LLM_MODEL=deepseek-v4-flash
 # z.ai (Zhipu GLM series, OpenAI-compatible, https://z.ai)
 export HINDSIGHT_API_LLM_PROVIDER=zai
 export HINDSIGHT_API_LLM_API_KEY=your-zai-api-key
-export HINDSIGHT_API_LLM_MODEL=glm-4.5-air
+export HINDSIGHT_API_LLM_MODEL=glm-4.5-flash  # or glm-4.5-air for the paid tier
 # Default base_url: https://api.z.ai/api/coding/paas/v4 (override with HINDSIGHT_API_LLM_BASE_URL if needed)
 
 # AWS Bedrock (native support - no API key needed, uses AWS credentials)
