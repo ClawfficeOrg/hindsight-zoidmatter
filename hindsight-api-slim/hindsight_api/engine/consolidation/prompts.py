@@ -1,5 +1,7 @@
 """Prompts for the consolidation engine."""
 
+import re
+
 # Default mission when no bank-specific mission is set
 _DEFAULT_MISSION = "Track every detail: names, numbers, dates, places, and relationships. Prefer specifics over abstractions, never generalise."
 
@@ -80,6 +82,28 @@ Rules:
 - Return {{"creates": [], "updates": [], "deletes": []}} if nothing durable is found."""
 
 
+_LONE_OPEN_BRACE = re.compile(r"(?<!\{)\{(?!\{)")
+_LONE_CLOSE_BRACE = re.compile(r"(?<!\})\}(?!\})")
+
+
+def _escape_braces(text: str) -> str:
+    """Double any lone ``{`` / ``}`` so the text survives ``str.format`` untouched.
+
+    The assembled prompt is later passed through ``str.format`` to substitute
+    real placeholders like ``{facts_text}``. Any literal braces in caller-
+    supplied text — e.g. a mission that happens to contain JSON examples or
+    config-shaped snippets — would otherwise be interpreted as format keys and
+    raise ``KeyError`` at consolidation time.
+
+    Idempotent: text that already contains escaped ``{{`` / ``}}`` pairs is
+    left as-is. Only lone braces (not adjacent to another brace of the same
+    kind) are doubled.
+    """
+    text = _LONE_OPEN_BRACE.sub("{{", text)
+    text = _LONE_CLOSE_BRACE.sub("}}", text)
+    return text
+
+
 def build_batch_consolidation_prompt(
     observations_mission: str | None = None,
     observation_capacity_note: str | None = None,
@@ -90,11 +114,11 @@ def build_batch_consolidation_prompt(
     The mission defines *what* to track (customisable per bank).
     Processing rules and output format are always present regardless of mission.
     """
-    mission = observations_mission or _DEFAULT_MISSION
+    mission = _escape_braces(observations_mission or _DEFAULT_MISSION)
 
     capacity_section = ""
     if observation_capacity_note:
-        capacity_section = f"\n\n## CAPACITY CONSTRAINT\n{observation_capacity_note}"
+        capacity_section = f"\n\n## CAPACITY CONSTRAINT\n{_escape_braces(observation_capacity_note)}"
 
     return (
         "You are a memory consolidation system. Synthesize facts into observations "
