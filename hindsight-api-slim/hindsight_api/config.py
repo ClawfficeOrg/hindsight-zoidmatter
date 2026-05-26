@@ -292,7 +292,7 @@ ENV_RERANKER_GOOGLE_SERVICE_ACCOUNT_KEY = "HINDSIGHT_API_RERANKER_GOOGLE_SERVICE
 ENV_VECTOR_EXTENSION = "HINDSIGHT_API_VECTOR_EXTENSION"
 ENV_TEXT_SEARCH_EXTENSION = "HINDSIGHT_API_TEXT_SEARCH_EXTENSION"
 ENV_TEXT_SEARCH_EXTENSION_NATIVE_LANGUAGE = "HINDSIGHT_API_TEXT_SEARCH_EXTENSION_NATIVE_LANGUAGE"
-ENV_RETAIN_OUTPUT_LANGUAGE = "HINDSIGHT_API_RETAIN_OUTPUT_LANGUAGE"
+ENV_LLM_OUTPUT_LANGUAGE = "HINDSIGHT_API_LLM_OUTPUT_LANGUAGE"
 
 ENV_HOST = "HINDSIGHT_API_HOST"
 ENV_PORT = "HINDSIGHT_API_PORT"
@@ -904,7 +904,10 @@ class HindsightConfig:
     # other backends). Only the "native" backend reads this field; pgroonga
     # uses TokenBigram, vchord uses llmlingua2, pg_textsearch hardcodes english.
     text_search_extension_native_language: str
-    retain_output_language: str | None  # When set, instructs the fact extractor to output in this language
+    # When set, every LLM-generated artifact (retain facts, consolidation
+    # observations, reflect responses) is forced into this language regardless
+    # of the source content. Unset preserves source language.
+    llm_output_language: str | None
 
     # LLM (default, used as fallback for per-operation config)
     llm_provider: str
@@ -1469,7 +1472,7 @@ class HindsightConfig:
                 ENV_TEXT_SEARCH_EXTENSION_NATIVE_LANGUAGE,
                 DEFAULT_TEXT_SEARCH_EXTENSION_NATIVE_LANGUAGE,
             ).lower(),
-            retain_output_language=(os.getenv(ENV_RETAIN_OUTPUT_LANGUAGE) or None),
+            llm_output_language=(os.getenv(ENV_LLM_OUTPUT_LANGUAGE) or None),
             # LLM
             llm_provider=llm_provider,
             llm_api_key=os.getenv(ENV_LLM_API_KEY),

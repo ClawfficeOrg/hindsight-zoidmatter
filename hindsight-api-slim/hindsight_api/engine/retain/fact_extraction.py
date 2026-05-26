@@ -951,18 +951,14 @@ def _build_extraction_prompt_and_schema(config) -> tuple[str, type]:
         prompt = prompt + labels_section
 
     # Force the LLM to emit fact text in the configured language, regardless of
-    # the source content's language. This is independent of the BM25 indexing
-    # language (HINDSIGHT_API_TEXT_SEARCH_EXTENSION_NATIVE_LANGUAGE) by design —
-    # users may want extraction in one language while indexing in another (e.g.
-    # preserve original-language facts but index with a 'simple' tokenizer).
-    # When unset, the extractor preserves the source language.
-    retain_output_language = getattr(config, "retain_output_language", None)
-    if retain_output_language:
-        prompt = (
-            prompt + f"\n\nIMPORTANT: Respond exclusively in {retain_output_language}. "
-            f"Translate any source content into {retain_output_language} when extracting facts. "
-            f"All fact text, context, and entity names must be in {retain_output_language}."
-        )
+    # the source content's language. Same directive is applied to consolidation
+    # and reflect so HINDSIGHT_API_LLM_OUTPUT_LANGUAGE has a uniform effect
+    # across the pipeline. This is independent of the BM25 indexing language
+    # (HINDSIGHT_API_TEXT_SEARCH_EXTENSION_NATIVE_LANGUAGE) by design — search
+    # tokenization and LLM output language are separate concerns.
+    from ..prompt_utils import output_language_directive
+
+    prompt = prompt + output_language_directive(getattr(config, "llm_output_language", None))
 
     response_schema = base_response_class
 

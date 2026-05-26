@@ -218,21 +218,25 @@ HINDSIGHT_API_TEXT_SEARCH_EXTENSION=pgroonga
 
 The `native` and `pgroonga` knobs do not apply to each other — `pgroonga`'s tokenizer is set at index creation and ignores `HINDSIGHT_API_TEXT_SEARCH_EXTENSION_NATIVE_LANGUAGE`.
 
-#### Forcing the Extraction Language
+#### Forcing the LLM Output Language
 
-Independent from the BM25 backend, `HINDSIGHT_API_RETAIN_OUTPUT_LANGUAGE` instructs the fact extraction LLM to emit facts in a specific language regardless of the source content's language:
+Independent from the BM25 backend, `HINDSIGHT_API_LLM_OUTPUT_LANGUAGE` forces every LLM-generated artifact into a single language regardless of the source content. This applies uniformly to:
+
+- **Retain** — fact text, context, and entity names extracted from source documents.
+- **Consolidation** — observations / mental models synthesized from those facts.
+- **Reflect** — the final natural-language response returned by the reflect API.
 
 ```bash
-# Bank stores facts in Spanish even when source documents are English / French / etc.
-HINDSIGHT_API_RETAIN_OUTPUT_LANGUAGE=Spanish
+# Every LLM call (retain, consolidation, reflect) emits Spanish regardless of source language.
+HINDSIGHT_API_LLM_OUTPUT_LANGUAGE=Spanish
 ```
 
 Common patterns:
-- **Aligned, single-language bank**: `HINDSIGHT_API_TEXT_SEARCH_EXTENSION_NATIVE_LANGUAGE=spanish` + `HINDSIGHT_API_RETAIN_OUTPUT_LANGUAGE=Spanish` — store and index in Spanish even when sources are mixed.
-- **Mixed-language bank with multilingual indexing**: `HINDSIGHT_API_TEXT_SEARCH_EXTENSION=pgroonga` + leave `HINDSIGHT_API_RETAIN_OUTPUT_LANGUAGE` unset — preserve source-language facts; pgroonga handles all of them in one index.
-- **Cross-lingual unification**: `HINDSIGHT_API_RETAIN_OUTPUT_LANGUAGE=English` — extract every fact in English regardless of source. Useful when the consumer (an English-only LLM, dashboard, or downstream pipeline) needs uniform output.
+- **Aligned, single-language bank**: `HINDSIGHT_API_TEXT_SEARCH_EXTENSION_NATIVE_LANGUAGE=spanish` + `HINDSIGHT_API_LLM_OUTPUT_LANGUAGE=Spanish` — store, index, and respond in Spanish even when sources are mixed.
+- **Mixed-language bank with multilingual indexing**: `HINDSIGHT_API_TEXT_SEARCH_EXTENSION=pgroonga` + leave `HINDSIGHT_API_LLM_OUTPUT_LANGUAGE` unset — preserve source-language facts; pgroonga handles all of them in one index; reflect responds in the query's language.
+- **Cross-lingual unification**: `HINDSIGHT_API_LLM_OUTPUT_LANGUAGE=English` — every fact, observation, and reflect response in English regardless of source. Useful when the consumer (an English-only LLM, dashboard, or downstream pipeline) needs uniform output.
 
-Leave `HINDSIGHT_API_RETAIN_OUTPUT_LANGUAGE` unset to preserve source-language facts (the default).
+Leave `HINDSIGHT_API_LLM_OUTPUT_LANGUAGE` unset to preserve the source/query language across the pipeline (the default).
 
 #### Backfilling After a Language Change
 

@@ -276,32 +276,32 @@ def test_text_search_extension_rejects_unknown(monkeypatch):
         HindsightConfig.from_env()
 
 
-def test_retain_output_language_defaults_to_none(monkeypatch):
+def test_llm_output_language_defaults_to_none(monkeypatch):
     from hindsight_api.config import HindsightConfig
 
-    monkeypatch.delenv("HINDSIGHT_API_RETAIN_OUTPUT_LANGUAGE", raising=False)
+    monkeypatch.delenv("HINDSIGHT_API_LLM_OUTPUT_LANGUAGE", raising=False)
     monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
 
     config = HindsightConfig.from_env()
-    assert config.retain_output_language is None
+    assert config.llm_output_language is None
 
 
-def test_retain_output_language_loaded_from_env(monkeypatch):
+def test_llm_output_language_loaded_from_env(monkeypatch):
     from hindsight_api.config import HindsightConfig
 
-    monkeypatch.setenv("HINDSIGHT_API_RETAIN_OUTPUT_LANGUAGE", "Japanese")
+    monkeypatch.setenv("HINDSIGHT_API_LLM_OUTPUT_LANGUAGE", "Japanese")
     monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
 
     config = HindsightConfig.from_env()
-    assert config.retain_output_language == "Japanese"
+    assert config.llm_output_language == "Japanese"
 
 
-def test_retain_output_language_empty_string_is_unset(monkeypatch):
+def test_llm_output_language_empty_string_is_unset(monkeypatch):
     """Empty env var (e.g. from Helm) should be treated as unset, not literal ''."""
     from hindsight_api.config import HindsightConfig
 
-    monkeypatch.setenv("HINDSIGHT_API_RETAIN_OUTPUT_LANGUAGE", "")
+    monkeypatch.setenv("HINDSIGHT_API_LLM_OUTPUT_LANGUAGE", "")
     monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
 
     config = HindsightConfig.from_env()
-    assert config.retain_output_language is None
+    assert config.llm_output_language is None
