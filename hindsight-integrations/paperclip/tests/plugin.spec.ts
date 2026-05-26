@@ -113,6 +113,43 @@ describe("bank ID derivation", () => {
       )
     ).toBe("paperclip::co-1::ag-1");
   });
+
+  it("static bankId overrides derivation when dynamicBankId is not true", async () => {
+    const { deriveBankId } = await import("../src/bank.js");
+    expect(
+      deriveBankId(
+        { companyId: "co-1", agentId: "ag-1" },
+        { bankId: "spool-farm", bankGranularity: ["company", "agent"] }
+      )
+    ).toBe("spool-farm");
+  });
+
+  it("static bankId is trimmed", async () => {
+    const { deriveBankId } = await import("../src/bank.js");
+    expect(
+      deriveBankId({ companyId: "co-1", agentId: "ag-1" }, { bankId: "  shared-bank  " })
+    ).toBe("shared-bank");
+  });
+
+  it("empty/whitespace bankId falls through to dynamic derivation", async () => {
+    const { deriveBankId } = await import("../src/bank.js");
+    expect(
+      deriveBankId(
+        { companyId: "co-1", agentId: "ag-1" },
+        { bankId: "   ", bankGranularity: ["company", "agent"] }
+      )
+    ).toBe("paperclip::co-1::ag-1");
+  });
+
+  it("dynamicBankId=true ignores static bankId", async () => {
+    const { deriveBankId } = await import("../src/bank.js");
+    expect(
+      deriveBankId(
+        { companyId: "co-1", agentId: "ag-1" },
+        { bankId: "spool-farm", dynamicBankId: true, bankGranularity: ["company", "agent"] }
+      )
+    ).toBe("paperclip::co-1::ag-1");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -236,6 +273,31 @@ describe("agent.run.started", () => {
       stateKey: "user-id",
     });
     expect(cachedUserId).toBe("alice@acme.com");
+  });
+
+  it("routes recall to static bankId when dynamicBankId is not true", async () => {
+    const harness = buildHarness({
+      ...DEFAULT_CONFIG,
+      bankId: "spool-farm",
+      dynamicBankId: false,
+    });
+    await setupPlugin(harness);
+    const issue = await seedIssue(harness, {
+      companyId: "co-1",
+      title: "Shared project context",
+    });
+
+    await harness.emit(
+      "agent.run.started",
+      { agentId: "ag-1", runId: "run-static-1", issueId: issue.id },
+      { companyId: "co-1" }
+    );
+
+    const recallCall = fetchMock.mock.calls.find(([url]: [string]) => url.includes("recall"));
+    expect(recallCall).toBeDefined();
+    expect(recallCall?.[0]).toContain(encodeURIComponent("spool-farm"));
+    // Should NOT contain the dynamic derivation prefix
+    expect(recallCall?.[0]).not.toContain(encodeURIComponent("paperclip::"));
   });
 
   it("skips recall when no issueId is provided", async () => {

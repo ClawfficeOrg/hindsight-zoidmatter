@@ -1,12 +1,18 @@
 /**
  * Bank ID derivation — maps Paperclip company/agent identity onto Hindsight bank IDs.
  *
- * Default format: "paperclip::{companyId}::{agentId}"
+ * Two modes:
  *
- * bankGranularity: ['company']               → "paperclip::{companyId}"
- * bankGranularity: ['agent']                 → "paperclip::{agentId}"
- * bankGranularity: ['company','agent']       → "paperclip::{companyId}::{agentId}"
- * bankGranularity: ['company','agent','user'] → "paperclip::{companyId}::{agentId}::user::{userId}"
+ *   1. Static:  dynamicBankId = false (default: true) + bankId set
+ *               → returns bankId verbatim, bypassing all derivation.
+ *
+ *   2. Dynamic: dynamicBankId = true (default) or bankId unset
+ *               → derives from bankGranularity:
+ *
+ *      bankGranularity: ['company']               → "paperclip::{companyId}"
+ *      bankGranularity: ['agent']                 → "paperclip::{agentId}"
+ *      bankGranularity: ['company','agent']       → "paperclip::{companyId}::{agentId}"
+ *      bankGranularity: ['company','agent','user'] → "paperclip::{companyId}::{agentId}::user::{userId}"
  */
 
 export interface BankContext {
@@ -16,10 +22,19 @@ export interface BankContext {
 }
 
 export interface BankConfig {
+  bankId?: string;
+  dynamicBankId?: boolean;
   bankGranularity?: Array<"company" | "agent" | "user">;
 }
 
 export function deriveBankId(context: BankContext, config: BankConfig): string {
+  // Static override: when bankId is set and dynamicBankId is not explicitly true
+  const staticId = config.bankId?.trim();
+  if (staticId && config.dynamicBankId !== true) {
+    return staticId;
+  }
+
+  // Dynamic derivation via bankGranularity
   const granularity = config.bankGranularity ?? ["company", "agent"];
   const parts: string[] = ["paperclip"];
 

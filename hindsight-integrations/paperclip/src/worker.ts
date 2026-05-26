@@ -25,6 +25,8 @@ import { deriveBankId, extractUserFromIssue } from "./bank.js";
 interface PluginConfig {
   hindsightApiUrl: string;
   hindsightApiKeyRef?: string;
+  bankId?: string;
+  dynamicBankId?: boolean;
   bankGranularity?: Array<"company" | "agent" | "user">;
   recallBudget?: "low" | "mid" | "high";
   autoRetain?: boolean;
