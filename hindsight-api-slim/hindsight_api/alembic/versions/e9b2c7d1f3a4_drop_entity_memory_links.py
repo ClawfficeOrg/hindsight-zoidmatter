@@ -6,14 +6,13 @@ derives them on demand from ``unit_entities``, and recall already used the
 read from the link table — on a 10k-unit benchmark bank, entity rows were
 53% of all link rows (~190 MB after indexes) and recall never touched them.
 
-This migration:
-
-1. Drops ``idx_memory_links_entity_covering`` (the partial index targeting
-   ``WHERE link_type = 'entity'`` rows that no longer exist).
-2. Deletes ``memory_links`` rows with ``link_type = 'entity'``.
+This migration deletes ``memory_links`` rows with ``link_type = 'entity'``.
+``idx_memory_links_entity_covering`` was already dropped by migration
+``e1b2c3d4f5a6``; we still issue ``DROP INDEX IF EXISTS`` defensively in case
+this migration runs against an older snapshot that predates that one.
 
 Revision ID: e9b2c7d1f3a4
-Revises: 86f7a033d372
+Revises: e1b2c3d4f5a6
 Create Date: 2026-05-26
 """
 
@@ -24,7 +23,7 @@ from alembic import context, op
 from hindsight_api.alembic._dialect import run_for_dialect
 
 revision: str = "e9b2c7d1f3a4"
-down_revision: str | Sequence[str] | None = "86f7a033d372"
+down_revision: str | Sequence[str] | None = "e1b2c3d4f5a6"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
