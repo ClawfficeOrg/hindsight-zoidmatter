@@ -3,12 +3,13 @@ Test retain function and chunk storage.
 """
 import asyncio
 import logging
+import uuid
 from datetime import datetime, timedelta, timezone
 
 import pytest
 
 from hindsight_api import RequestContext
-from hindsight_api.engine.memory_engine import Budget
+from hindsight_api.engine.memory_engine import Budget, MemoryEngine
 
 logger = logging.getLogger(__name__)
 
@@ -3394,3 +3395,208 @@ async def test_streaming_disabled_for_small_docs(memory_mock_llm, request_contex
 
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.hs_llm_core
+class TestFactExtractionQuality:
+    """Quality tests for the retain → recall pipeline using a real LLM.
+
+    These tests verify that extracted facts carry the right *content*, not just
+    that something was stored.  MockLLM is a structural stub — it cannot validate
+    that the LLM extracted Alice's role vs. Dave's role correctly.  All tests here
+    use memory_real_llm and the LLM judge.
+    """
+
+    @pytest.fixture
+    def memory(self, memory_real_llm):
+        return memory_real_llm
+
+    @pytest.mark.asyncio
+    @pytest.mark.flaky(reruns=2, reruns_delay=2)
+    async def test_extract_multiple_dimensions_from_paragraph(self, memory: MemoryEngine, request_context):
+        """A single paragraph about a person should yield facts covering multiple dimensions.
+
+        Retaining a rich bio should produce facts that collectively mention at least
+        three of: role, employer, specialisation, location, education.
+        """
+        from tests.llm_judge import assert_meets_criteria
+
+        bank_id = f"test-quality-dims-{uuid.uuid4().hex[:8]}"
+        try:
+            await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+            await memory.retain_async(
+                bank_id=bank_id,
+                content=(
+                    "Alice Chen is a senior machine learning engineer at Anthropic. "
+                    "She specialises in reinforcement learning from human feedback (RLHF) "
+                    "and has published three papers on the topic. Alice is based in San Francisco "
+                    "and joined Anthropic in 2022 after completing her PhD at Stanford."
+                ),
+                context="team profile",
+                request_context=request_context,
+            )
+            result = await memory.recall_async(
+                bank_id=bank_id,
+                query="Tell me about Alice Chen",
+                budget=Budget.LOW,
+                request_context=request_context,
+            )
+            assert len(result.results) > 0, "Should recall at least one fact"
+            recalled_text = " ".join(r.text for r in result.results)
+            await assert_meets_criteria(
+                response=recalled_text,
+                criteria=(
+                    "The recalled facts mention at least THREE of the following about Alice Chen: "
+                    "her role or job title, her employer (Anthropic), her specialisation or research area "
+                    "(RLHF / reinforcement learning), her location (San Francisco), or her education (PhD, Stanford)."
+                ),
+                msg=f"Expected multiple profile dimensions to be extracted. Got: {recalled_text[:500]}",
+            )
+        finally:
+            await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
+    @pytest.mark.flaky(reruns=2, reruns_delay=2)
+    async def test_recall_surfaces_most_relevant_fact(self, memory: MemoryEngine, request_context):
+        """The recall result most relevant to the query should appear at the top.
+
+        Retain several unrelated facts so the retrieval has to discriminate, then
+        verify the top result is semantically on-topic.
+        """
+        from tests.llm_judge import assert_meets_criteria
+
+        bank_id = f"test-quality-relevance-{uuid.uuid4().hex[:8]}"
+        try:
+            await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+            for content in [
+                "Bob is a software engineer.",
+                "Bob's favourite programming language is Rust.",
+                "Carol manages the infrastructure team.",
+                "The office has a rooftop garden.",
+            ]:
+                await memory.retain_async(bank_id=bank_id, content=content, request_context=request_context)
+
+            result = await memory.recall_async(
+                bank_id=bank_id,
+                query="What programming language does Bob prefer?",
+                budget=Budget.LOW,
+                request_context=request_context,
+            )
+            assert len(result.results) > 0
+            top_fact = result.results[0].text
+            await assert_meets_criteria(
+                response=top_fact,
+                criteria="The fact mentions Bob's preferred or favourite programming language, Rust.",
+                msg=f"Expected top recall result to be about Bob's language preference. Got: {top_fact}",
+            )
+        finally:
+            await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
+    @pytest.mark.flaky(reruns=2, reruns_delay=2)
+    async def test_recall_isolates_correct_person(self, memory: MemoryEngine, request_context):
+        """A query about one person should not surface facts about an unrelated person."""
+        from tests.llm_judge import assert_meets_criteria
+
+        bank_id = f"test-quality-isolation-{uuid.uuid4().hex[:8]}"
+        try:
+            await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+            for content in [
+                "Alice works as a data scientist at Netflix.",
+                "Alice holds a master's degree in statistics.",
+                "Dave is a DevOps engineer who manages Kubernetes clusters.",
+                "Dave joined the team six months ago.",
+            ]:
+                await memory.retain_async(bank_id=bank_id, content=content, request_context=request_context)
+
+            result = await memory.recall_async(
+                bank_id=bank_id,
+                query="What is Alice's role and background?",
+                budget=Budget.LOW,
+                request_context=request_context,
+            )
+            assert len(result.results) > 0
+            top_text = " ".join(r.text for r in result.results[:3])
+            await assert_meets_criteria(
+                response=top_text,
+                criteria=(
+                    "The recalled facts are about Alice (data scientist, Netflix, statistics). "
+                    "They do NOT describe Dave's role or background."
+                ),
+                msg=f"Expected recall to return Alice's facts, not Dave's. Got: {top_text[:500]}",
+            )
+        finally:
+            await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
+    @pytest.mark.flaky(reruns=2, reruns_delay=2)
+    async def test_negation_preserved_in_extraction(self, memory: MemoryEngine, request_context):
+        """Negations in content should survive fact extraction without being reversed."""
+        from tests.llm_judge import assert_meets_criteria
+
+        bank_id = f"test-quality-negation-{uuid.uuid4().hex[:8]}"
+        try:
+            await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+            await memory.retain_async(
+                bank_id=bank_id,
+                content=(
+                    "Marcus does not have a driver's licence. "
+                    "He relies on public transport to commute to work."
+                ),
+                request_context=request_context,
+            )
+            result = await memory.recall_async(
+                bank_id=bank_id,
+                query="Does Marcus drive to work?",
+                budget=Budget.LOW,
+                request_context=request_context,
+            )
+            assert len(result.results) > 0
+            recalled_text = " ".join(r.text for r in result.results)
+            await assert_meets_criteria(
+                response=recalled_text,
+                criteria=(
+                    "The recalled facts accurately convey that Marcus does NOT drive — "
+                    "either that he lacks a driver's licence, or that he uses public transport."
+                ),
+                msg=f"Expected negation to be preserved in extraction. Got: {recalled_text[:500]}",
+            )
+        finally:
+            await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
+    @pytest.mark.flaky(reruns=2, reruns_delay=2)
+    async def test_technical_specifics_survive_extraction(self, memory: MemoryEngine, request_context):
+        """Technical terms and numbers should survive fact extraction intact."""
+        from tests.llm_judge import assert_meets_criteria
+
+        bank_id = f"test-quality-technical-{uuid.uuid4().hex[:8]}"
+        try:
+            await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+            await memory.retain_async(
+                bank_id=bank_id,
+                content=(
+                    "The deployment uses a 3-node PostgreSQL cluster with pgvector enabled. "
+                    "Query latency at p99 is 42ms. The HNSW index uses ef_construction=128."
+                ),
+                context="infrastructure notes",
+                request_context=request_context,
+            )
+            result = await memory.recall_async(
+                bank_id=bank_id,
+                query="What is the database configuration?",
+                budget=Budget.LOW,
+                request_context=request_context,
+            )
+            assert len(result.results) > 0
+            recalled_text = " ".join(r.text for r in result.results)
+            await assert_meets_criteria(
+                response=recalled_text,
+                criteria=(
+                    "The recalled facts mention specific technical details: PostgreSQL, "
+                    "pgvector, or the HNSW index."
+                ),
+                msg=f"Expected technical specifics to survive extraction. Got: {recalled_text[:500]}",
+            )
+        finally:
+            await memory.delete_bank(bank_id, request_context=request_context)

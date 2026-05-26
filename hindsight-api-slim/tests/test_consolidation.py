@@ -472,6 +472,60 @@ class TestConsolidationIntegration:
         # Cleanup
         await memory.delete_bank(bank_id, request_context=request_context)
 
+    @pytest.mark.asyncio
+    @pytest.mark.hs_llm_core
+    async def test_consolidation_reduces_count_for_near_duplicate_facts(
+        self, memory_real_llm: MemoryEngine, request_context
+    ):
+        """Consolidation with a real LLM should merge near-duplicate facts.
+
+        MockLLM always emits one observation per fact — it never merges.  This test
+        verifies that the real consolidation prompt actually collapses semantically
+        redundant information.  Three phrasings of the same email address should
+        yield fewer than three observations.
+        """
+        memory = memory_real_llm
+        bank_id = f"test-consolidation-count-{uuid.uuid4().hex[:8]}"
+        try:
+            await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+
+            # Three near-identical facts — same information, different wording
+            for content in [
+                "Sarah's email is sarah@example.com.",
+                "You can reach Sarah at sarah@example.com.",
+                "Sarah's contact email address is sarah@example.com.",
+            ]:
+                await memory.retain_async(bank_id=bank_id, content=content, request_context=request_context)
+
+            await memory.wait_for_background_tasks()
+
+            # Two clearly distinct facts that should stay separate
+            await memory.retain_async(bank_id=bank_id, content="Sarah is a product manager.", request_context=request_context)
+            await memory.retain_async(bank_id=bank_id, content="Sarah is based in Austin, Texas.", request_context=request_context)
+
+            await memory.wait_for_background_tasks()
+
+            async with memory._pool.acquire() as conn:
+                observations = await conn.fetch(
+                    "SELECT id, text FROM memory_units WHERE bank_id = $1 AND fact_type = 'observation' ORDER BY created_at",
+                    bank_id,
+                )
+
+            obs_count = len(observations)
+            obs_texts = [o["text"] for o in observations]
+
+            # 5 input facts, 3 are near-duplicates — real consolidation must merge some
+            assert obs_count < 5, (
+                f"Expected fewer than 5 observations after merging near-duplicates. "
+                f"Got {obs_count}: {obs_texts}"
+            )
+            # The two distinct facts should still have representation
+            assert obs_count >= 2, (
+                f"Expected at least 2 observations for distinct facts. Got {obs_count}: {obs_texts}"
+            )
+        finally:
+            await memory.delete_bank(bank_id, request_context=request_context)
+
 
 class TestConsolidationDisabled:
     """Test consolidation when disabled via config."""
