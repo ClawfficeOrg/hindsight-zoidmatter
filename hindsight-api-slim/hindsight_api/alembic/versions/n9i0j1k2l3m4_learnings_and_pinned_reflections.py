@@ -95,7 +95,7 @@ def _vector_index_using_clause(ext: str) -> str:
 
 def _detect_text_search_extension() -> str:
     """
-    Detect or validate text search extension: 'native', 'vchord', or 'pg_textsearch'.
+    Detect or validate text search extension: 'native', 'vchord', 'pg_textsearch', or 'pg_search'.
     Respects HINDSIGHT_API_TEXT_SEARCH_EXTENSION env var.
     Creates the extension if needed.
     """
@@ -125,11 +125,22 @@ def _detect_text_search_extension() -> str:
                 # Extension truly doesn't exist - re-raise the error
                 raise
         return "pg_textsearch"
+    elif text_search_extension == "pg_search":
+        # ParadeDB pg_search — true BM25 over base columns, Citus-compatible.
+        try:
+            op.execute("CREATE EXTENSION IF NOT EXISTS pg_search CASCADE")
+        except Exception:
+            conn = op.get_bind()
+            result = conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'pg_search'")).fetchone()
+            if not result:
+                raise
+        return "pg_search"
     elif text_search_extension == "native":
         return "native"
     else:
         raise ValueError(
-            f"Invalid HINDSIGHT_API_TEXT_SEARCH_EXTENSION: {text_search_extension}. Must be 'native', 'vchord', or 'pg_textsearch'"
+            f"Invalid HINDSIGHT_API_TEXT_SEARCH_EXTENSION: {text_search_extension}. "
+            "Must be 'native', 'vchord', 'pg_textsearch', or 'pg_search'"
         )
 
 
@@ -200,6 +211,17 @@ def _pg_upgrade() -> None:
             CREATE INDEX idx_learnings_text_search ON {schema}learnings
             USING bm25(text) WITH (text_config='english')
         """)
+    elif text_search_ext == "pg_search":
+        # ParadeDB pg_search: dummy TEXT column; BM25 index is built directly over (id, text)
+        # with key_field='id' (matches the table's primary key).
+        op.execute(f"""
+            ALTER TABLE {schema}learnings ADD COLUMN search_vector TEXT
+        """)
+        op.execute(f"""
+            CREATE INDEX idx_learnings_text_search ON {schema}learnings
+            USING bm25 (id, text)
+            WITH (key_field='id')
+        """)
     else:  # native
         # Native PostgreSQL: tsvector with automatic generation
         op.execute(f"""
@@ -263,6 +285,17 @@ def _pg_upgrade() -> None:
             CREATE INDEX idx_pinned_reflections_text_search ON {schema}pinned_reflections
             USING bm25(content)
             WITH (text_config='english')
+        """)
+    elif text_search_ext == "pg_search":
+        # ParadeDB pg_search: dummy TEXT column; BM25 index over (id, name, content)
+        # with key_field='id'.
+        op.execute(f"""
+            ALTER TABLE {schema}pinned_reflections ADD COLUMN search_vector TEXT
+        """)
+        op.execute(f"""
+            CREATE INDEX idx_pinned_reflections_text_search ON {schema}pinned_reflections
+            USING bm25 (id, name, content)
+            WITH (key_field='id')
         """)
     else:  # native
         # Native PostgreSQL: tsvector with automatic generation
