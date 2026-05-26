@@ -95,9 +95,15 @@ def _vector_index_using_clause(ext: str) -> str:
 
 def _detect_text_search_extension() -> str:
     """
-    Detect or validate text search extension: 'native', 'vchord', 'pg_textsearch', or 'pg_search'.
-    Respects HINDSIGHT_API_TEXT_SEARCH_EXTENSION env var.
+    Detect or validate text search extension: 'native', 'vchord', 'pg_textsearch',
+    'pgroonga', or 'pg_search'. Respects HINDSIGHT_API_TEXT_SEARCH_EXTENSION env var.
     Creates the extension if needed.
+
+    pgroonga is treated as native here so this migration still creates valid
+    tsvector columns; ensure_text_search_extension() at startup converts the
+    reflections table (renamed from pinned_reflections in p1k2l3m4n5o6) to
+    pgroonga structures. The learnings table is dropped in p1k2l3m4n5o6 so its
+    transient native-style column never reaches steady state.
     """
     text_search_extension = os.getenv("HINDSIGHT_API_TEXT_SEARCH_EXTENSION", "native").lower()
 
@@ -137,10 +143,14 @@ def _detect_text_search_extension() -> str:
         return "pg_search"
     elif text_search_extension == "native":
         return "native"
+    elif text_search_extension == "pgroonga":
+        # Treat as native here; ensure_text_search_extension() converts the
+        # reflections table to pgroonga structures at runtime.
+        return "native"
     else:
         raise ValueError(
             f"Invalid HINDSIGHT_API_TEXT_SEARCH_EXTENSION: {text_search_extension}. "
-            "Must be 'native', 'vchord', 'pg_textsearch', or 'pg_search'"
+            "Must be 'native', 'vchord', 'pg_textsearch', 'pgroonga', or 'pg_search'"
         )
 
 
