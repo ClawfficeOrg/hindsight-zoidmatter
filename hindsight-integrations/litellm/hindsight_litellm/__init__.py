@@ -124,6 +124,7 @@ from .config import (
     get_defaults,
     is_configured,
     reset_config,
+    set_bank_mission,
     set_defaults,
 )
 from .wrappers import (
@@ -1529,6 +1530,7 @@ __all__ = [
     # Main API
     "configure",
     "set_defaults",
+    "set_bank_mission",
     "enable",
     "disable",
     "is_enabled",

@@ -1539,3 +1539,68 @@ class TestContextManagerFullRestore:
             assert is_enabled() is True
 
         assert is_enabled() is True  # still enabled after context
+
+
+class TestSetBankMission:
+    """set_bank_mission() configures a bank's mission via hindsight-client."""
+
+    def test_requires_bank_id_when_not_configured(self):
+        """Raises HindsightError if no bank_id can be resolved."""
+        from hindsight_litellm import HindsightError, reset_config, set_bank_mission
+
+        reset_config()
+        with pytest.raises(HindsightError, match="bank_id"):
+            set_bank_mission("Some mission")
+
+    def test_forwards_to_hindsight_client_create_bank(self):
+        """Calls Hindsight.create_bank with the resolved bank_id, name, and mission."""
+        from unittest.mock import MagicMock, patch
+
+        from hindsight_litellm import configure, set_bank_mission, set_defaults
+
+        configure(hindsight_api_url="http://localhost:8888")
+        set_defaults(bank_id="agent-7")
+
+        mock_client = MagicMock()
+        with patch("hindsight_client.Hindsight", return_value=mock_client):
+            set_bank_mission(
+                "Remember user preferences across conversations.",
+                name="Pref Agent",
+            )
+
+        mock_client.create_bank.assert_called_once_with(
+            bank_id="agent-7",
+            name="Pref Agent",
+            mission="Remember user preferences across conversations.",
+        )
+
+    def test_explicit_bank_id_overrides_default(self):
+        """Explicit bank_id arg takes precedence over the configured default."""
+        from unittest.mock import MagicMock, patch
+
+        from hindsight_litellm import configure, set_bank_mission, set_defaults
+
+        configure(hindsight_api_url="http://localhost:8888")
+        set_defaults(bank_id="default-bank")
+
+        mock_client = MagicMock()
+        with patch("hindsight_client.Hindsight", return_value=mock_client):
+            set_bank_mission("override mission", bank_id="other-bank")
+
+        called_kwargs = mock_client.create_bank.call_args.kwargs
+        assert called_kwargs["bank_id"] == "other-bank"
+
+    def test_wraps_client_failure_in_hindsight_error(self):
+        """Underlying client errors are re-raised as HindsightError."""
+        from unittest.mock import MagicMock, patch
+
+        from hindsight_litellm import HindsightError, configure, set_bank_mission, set_defaults
+
+        configure(hindsight_api_url="http://localhost:8888")
+        set_defaults(bank_id="agent-7")
+
+        mock_client = MagicMock()
+        mock_client.create_bank.side_effect = RuntimeError("server unavailable")
+        with patch("hindsight_client.Hindsight", return_value=mock_client):
+            with pytest.raises(HindsightError, match="server unavailable"):
+                set_bank_mission("a mission")

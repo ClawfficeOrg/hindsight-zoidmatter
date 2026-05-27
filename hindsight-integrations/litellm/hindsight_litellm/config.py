@@ -549,6 +549,63 @@ def _create_or_update_bank(
             logging.getLogger("hindsight_litellm").warning(f"Failed to create/update bank: {e}")
 
 
+def set_bank_mission(
+    mission: str,
+    *,
+    bank_id: Optional[str] = None,
+    name: Optional[str] = None,
+    hindsight_api_url: Optional[str] = None,
+    api_key: Optional[str] = None,
+) -> None:
+    """Set or update the mission for a memory bank.
+
+    The mission steers what the bank learns and synthesises into mental
+    models. Calling this creates the bank if it doesn't exist or updates
+    it in place if it does.
+
+    Args:
+        mission: Instructions describing what the bank should learn and
+            remember (used during reflect / mental-model synthesis).
+        bank_id: Bank to configure. If omitted, falls back to the
+            currently configured default bank.
+        name: Optional display label for the bank.
+        hindsight_api_url: Hindsight server URL. Falls back to the
+            currently configured URL (or the default cloud URL).
+        api_key: Hindsight API key. Falls back to the currently
+            configured key, then to the ``HINDSIGHT_API_KEY`` env var.
+
+    Raises:
+        HindsightError: If no bank_id can be resolved or the bank
+            cannot be created/updated.
+    """
+    from .callbacks import HindsightError
+
+    config = get_config()
+    resolved_bank = bank_id or (config.default_settings.bank_id if config else None)
+    if not resolved_bank:
+        raise HindsightError(
+            "set_bank_mission requires bank_id (either as an argument or via configure(...)/set_defaults(bank_id=...))."
+        )
+
+    resolved_url = hindsight_api_url or (
+        config.hindsight_api_url if config else DEFAULT_HINDSIGHT_API_URL
+    )
+    resolved_key = api_key or (config.api_key if config else None) or os.getenv("HINDSIGHT_API_KEY")
+
+    try:
+        from hindsight_client import Hindsight
+    except ImportError as e:
+        raise HindsightError(
+            "hindsight_client is required for set_bank_mission. Install with: pip install hindsight-client"
+        ) from e
+
+    try:
+        client = Hindsight(base_url=resolved_url, api_key=resolved_key, user_agent=USER_AGENT)
+        client.create_bank(bank_id=resolved_bank, name=name, mission=mission)
+    except Exception as e:
+        raise HindsightError(f"Failed to set bank mission for '{resolved_bank}': {e}") from e
+
+
 def get_config() -> Optional[HindsightConfig]:
     """Get the current global configuration.
 
