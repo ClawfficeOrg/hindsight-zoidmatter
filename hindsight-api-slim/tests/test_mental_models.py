@@ -10,6 +10,7 @@ import pytest
 
 from hindsight_api.engine.memory_engine import MemoryEngine, fq_table
 from hindsight_api.engine.retain import embedding_utils
+from tests.llm_judge import assert_meets_criteria, evaluate
 
 
 @pytest.fixture
@@ -419,16 +420,12 @@ class TestDirectivesInReflect:
             assert len(result.text) > 0
 
             # Use LLM judge to check if response is in French
-            from tests.llm_judge import evaluate
-
             verdict = await evaluate(
                 response=result.text,
                 criteria="The response is written primarily in French (not English).",
             )
             if verdict.meets_criteria:
                 break
-
-        from tests.llm_judge import assert_meets_criteria
 
         await assert_meets_criteria(
             response=result.text,
@@ -1302,8 +1299,6 @@ class TestMentalModelRefreshTagSecurity:
 
         # SECURITY CHECK: The refreshed content should ONLY include information from
         # memories/models tagged with user:alice, NOT from user:bob or untagged
-        from tests.llm_judge import assert_meets_criteria
-
         await assert_meets_criteria(
             response=refreshed["content"],
             criteria=(
@@ -1489,9 +1484,7 @@ class TestMentalModelTriggerTagsConfig:
         """Override to use real LLM for this class."""
         return memory_real_llm
 
-    async def test_trigger_tags_match_any_includes_untagged_content(
-        self, memory: MemoryEngine, request_context
-    ):
+    async def test_trigger_tags_match_any_includes_untagged_content(self, memory: MemoryEngine, request_context):
         """Test that setting trigger.tags_match='any' allows a tagged model to see untagged memories.
 
         This is the fix for #786: by default, tagged models use all_strict which excludes
@@ -1532,8 +1525,6 @@ class TestMentalModelTriggerTagsConfig:
             mental_model_id=mm["id"],
             request_context=request_context,
         )
-
-        from tests.llm_judge import assert_meets_criteria
 
         await assert_meets_criteria(
             response=refreshed["content"],
@@ -1583,8 +1574,6 @@ class TestMentalModelTriggerTagsConfig:
             mental_model_id=mm["id"],
             request_context=request_context,
         )
-
-        from tests.llm_judge import assert_meets_criteria
 
         await assert_meets_criteria(
             response=refreshed["content"],

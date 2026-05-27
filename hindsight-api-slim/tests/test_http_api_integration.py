@@ -3,11 +3,15 @@ Integration test for the complete Hindsight API.
 
 Tests all endpoints by starting a FastAPI server and making HTTP requests.
 """
+
+from datetime import datetime
+
+import httpx
 import pytest
 import pytest_asyncio
-import httpx
-from datetime import datetime
+
 from hindsight_api.api import create_app
+from tests.llm_judge import assert_meets_criteria
 
 
 @pytest_asyncio.fixture
@@ -74,10 +78,10 @@ async def test_full_api_workflow(api_client, test_bank_id):
             "items": [
                 {
                     "content": "Alice is a machine learning researcher at Stanford.",
-                    "context": "conversation about team members"
+                    "context": "conversation about team members",
                 }
             ]
-        }
+        },
     )
     assert response.status_code == 200
     put_result = response.json()
@@ -89,16 +93,13 @@ async def test_full_api_workflow(api_client, test_bank_id):
         f"/v1/default/banks/{test_bank_id}/memories",
         json={
             "items": [
-                {
-                    "content": "Bob leads the infrastructure team and loves Kubernetes.",
-                    "context": "team introduction"
-                },
+                {"content": "Bob leads the infrastructure team and loves Kubernetes.", "context": "team introduction"},
                 {
                     "content": "Charlie recently joined as a product manager from Google.",
-                    "context": "new hire announcement"
-                }
+                    "context": "new hire announcement",
+                },
             ]
-        }
+        },
     )
     assert response.status_code == 200
     batch_result = response.json()
@@ -112,10 +113,7 @@ async def test_full_api_workflow(api_client, test_bank_id):
     # Recall memories
     response = await api_client.post(
         f"/v1/default/banks/{test_bank_id}/memories/recall",
-        json={
-            "query": "Who works on machine learning?",
-            "thinking_budget": 50
-        }
+        json={"query": "Who works on machine learning?", "thinking_budget": 50},
     )
     assert response.status_code == 200
     search_results = response.json()
@@ -136,8 +134,8 @@ async def test_full_api_workflow(api_client, test_bank_id):
         json={
             "query": "What do you know about the team members?",
             "thinking_budget": 30,
-            "context": "This is for a team overview document"
-        }
+            "context": "This is for a team overview document",
+        },
     )
     assert response.status_code == 200
     reflect_result = response.json()
@@ -175,10 +173,7 @@ async def test_full_api_workflow(api_client, test_bank_id):
     assert our_bank["last_document_at"] is not None, "last_document_at should be set after retain"
 
     # List memory units
-    response = await api_client.get(
-        f"/v1/default/banks/{test_bank_id}/memories/list",
-        params={"limit": 10}
-    )
+    response = await api_client.get(f"/v1/default/banks/{test_bank_id}/memories/list", params={"limit": 10})
     assert response.status_code == 200
     memory_units = response.json()
     assert "items" in memory_units
@@ -196,10 +191,10 @@ async def test_full_api_workflow(api_client, test_bank_id):
                 {
                     "content": "Project timeline: MVP launch in Q1, Beta in Q2.",
                     "context": "product roadmap",
-                    "document_id": "roadmap-2024-q1"
+                    "document_id": "roadmap-2024-q1",
                 }
             ]
-        }
+        },
     )
     assert response.status_code == 200
 
@@ -211,9 +206,7 @@ async def test_full_api_workflow(api_client, test_bank_id):
     assert len(documents["items"]) > 0
 
     # Get specific document
-    response = await api_client.get(
-        f"/v1/default/banks/{test_bank_id}/documents/roadmap-2024-q1"
-    )
+    response = await api_client.get(f"/v1/default/banks/{test_bank_id}/documents/roadmap-2024-q1")
     assert response.status_code == 200
     doc_info = response.json()
     assert "id" in doc_info
@@ -228,13 +221,7 @@ async def test_full_api_workflow(api_client, test_bank_id):
     # Update disposition traits
     response = await api_client.put(
         f"/v1/default/banks/{test_bank_id}/profile",
-        json={
-            "disposition": {
-                "skepticism": 4,
-                "literalism": 3,
-                "empathy": 4
-            }
-        }
+        json={"disposition": {"skepticism": 4, "literalism": 3, "empathy": 4}},
     )
     assert response.status_code == 200
 
@@ -280,19 +267,15 @@ async def test_full_api_workflow(api_client, test_bank_id):
             assert offset_data["items"][0]["id"] != entities_data["items"][0]["id"]
 
     # Get specific entity if any exist
-    if len(entities_data['items']) > 0:
-        entity_id = entities_data['items'][0]['id']
-        response = await api_client.get(
-            f"/v1/default/banks/{test_bank_id}/entities/{entity_id}"
-        )
+    if len(entities_data["items"]) > 0:
+        entity_id = entities_data["items"][0]["id"]
+        response = await api_client.get(f"/v1/default/banks/{test_bank_id}/entities/{entity_id}")
         assert response.status_code == 200
         entity_detail = response.json()
         assert "id" in entity_detail
 
         # Test regenerate observations (deprecated - returns 410 Gone)
-        response = await api_client.post(
-            f"/v1/default/banks/{test_bank_id}/entities/{entity_id}/regenerate"
-        )
+        response = await api_client.post(f"/v1/default/banks/{test_bank_id}/entities/{entity_id}/regenerate")
         assert response.status_code == 410  # Deprecated endpoint
 
     # Entity co-occurrence graph — shape is stable even when there are no
@@ -312,9 +295,7 @@ async def test_full_api_workflow(api_client, test_bank_id):
         assert edge["data"]["weight"] >= 1
 
     # min_count filter — raising the threshold can only shrink the edge set.
-    response = await api_client.get(
-        f"/v1/default/banks/{test_bank_id}/entities/graph?min_count=1000000"
-    )
+    response = await api_client.get(f"/v1/default/banks/{test_bank_id}/entities/graph?min_count=1000000")
     assert response.status_code == 200
     filtered_graph = response.json()
     assert filtered_graph["total_edges"] == 0
@@ -358,7 +339,7 @@ async def test_error_handling(api_client):
                     "context": "test"
                 }
             ]
-        }
+        },
     )
     assert response.status_code == 422  # Validation error
 
@@ -367,15 +348,13 @@ async def test_error_handling(api_client):
         "/v1/default/banks/error_test/memories/recall",
         json={
             "query": "test",
-            "budget": "invalid_budget"  # Invalid budget value (should be low/mid/high)
-        }
+            "budget": "invalid_budget",  # Invalid budget value (should be low/mid/high)
+        },
     )
     assert response.status_code == 422
 
     # Get non-existent document
-    response = await api_client.get(
-        "/v1/default/banks/nonexistent_bank/documents/fake-doc-id"
-    )
+    response = await api_client.get("/v1/default/banks/nonexistent_bank/documents/fake-doc-id")
     assert response.status_code == 404
 
 
@@ -391,19 +370,11 @@ async def test_concurrent_requests(api_client):
         "Emily is the CEO of a startup in San Francisco.",
         "Frank teaches computer science at MIT.",
         "Grace is a software architect specializing in distributed systems.",
-        "Henry leads the product team at Amazon."
+        "Henry leads the product team at Amazon.",
     ]
     for fact in test_facts:
         response = await api_client.post(
-            f"/v1/default/banks/{bank_id}/memories",
-            json={
-                "items": [
-                    {
-                        "content": fact,
-                        "context": "concurrent test"
-                    }
-                ]
-            }
+            f"/v1/default/banks/{bank_id}/memories", json={"items": [{"content": fact, "context": "concurrent test"}]}
         )
         responses.append(response)
 
@@ -412,10 +383,7 @@ async def test_concurrent_requests(api_client):
     assert all(r.json()["success"] for r in responses)
 
     # Verify all facts stored
-    response = await api_client.get(
-        f"/v1/default/banks/{bank_id}/memories/list",
-        params={"limit": 20}
-    )
+    response = await api_client.get(f"/v1/default/banks/{bank_id}/memories/list", params={"limit": 20})
     assert response.status_code == 200
     items = response.json()["items"]
     assert len(items) >= 5
@@ -434,26 +402,22 @@ async def test_document_deletion(api_client):
                 {
                     "content": "The quarterly sales report shows a 25% increase in revenue.",
                     "context": "Q1 financial review",
-                    "document_id": "sales-report-q1-2024"
+                    "document_id": "sales-report-q1-2024",
                 }
             ]
-        }
+        },
     )
     assert response.status_code == 200
 
     # Verify document exists
-    response = await api_client.get(
-        f"/v1/default/banks/{test_bank_id}/documents/sales-report-q1-2024"
-    )
+    response = await api_client.get(f"/v1/default/banks/{test_bank_id}/documents/sales-report-q1-2024")
     assert response.status_code == 200
     doc_info = response.json()
     initial_units = doc_info["memory_unit_count"]
     assert initial_units > 0
 
     # Delete the document
-    response = await api_client.delete(
-        f"/v1/default/banks/{test_bank_id}/documents/sales-report-q1-2024"
-    )
+    response = await api_client.delete(f"/v1/default/banks/{test_bank_id}/documents/sales-report-q1-2024")
     assert response.status_code == 200
     delete_result = response.json()
     assert delete_result["success"] is True
@@ -461,9 +425,7 @@ async def test_document_deletion(api_client):
     assert delete_result["memory_units_deleted"] == initial_units
 
     # Verify document is gone (should return 404)
-    response = await api_client.get(
-        f"/v1/default/banks/{test_bank_id}/documents/sales-report-q1-2024"
-    )
+    response = await api_client.get(f"/v1/default/banks/{test_bank_id}/documents/sales-report-q1-2024")
     assert response.status_code == 404
 
     # Verify document is not in the list
@@ -474,9 +436,7 @@ async def test_document_deletion(api_client):
     assert "sales-report-q1-2024" not in doc_ids
 
     # Try to delete again (should return 404)
-    response = await api_client.delete(
-        f"/v1/default/banks/{test_bank_id}/documents/sales-report-q1-2024"
-    )
+    response = await api_client.delete(f"/v1/default/banks/{test_bank_id}/documents/sales-report-q1-2024")
     assert response.status_code == 404
 
 
@@ -504,10 +464,10 @@ async def test_document_deletion_with_slashes_in_id(api_client):
                     {
                         "content": "The Q1 2024 report shows significant growth in user engagement.",
                         "context": "quarterly report",
-                        "document_id": document_id_with_slash
+                        "document_id": document_id_with_slash,
                     }
                 ]
-            }
+            },
         )
         assert response.status_code == 200, f"Failed to create document: {response.text}"
 
@@ -520,12 +480,9 @@ async def test_document_deletion_with_slashes_in_id(api_client):
 
         # 3. Delete the document (slashes in document_id should work with :path converter)
         encoded_doc_id = urllib.parse.quote(document_id_with_slash, safe="")
-        response = await api_client.delete(
-            f"/v1/default/banks/{test_bank_id}/documents/{encoded_doc_id}"
-        )
+        response = await api_client.delete(f"/v1/default/banks/{test_bank_id}/documents/{encoded_doc_id}")
         assert response.status_code == 200, (
-            f"Failed to delete document with slashes in ID. "
-            f"Status: {response.status_code}, Response: {response.text}"
+            f"Failed to delete document with slashes in ID. Status: {response.status_code}, Response: {response.text}"
         )
 
         # Verify document is deleted
@@ -723,10 +680,10 @@ async def test_async_retain(api_client):
             "items": [
                 {
                     "content": "Alice is a senior engineer at TechCorp. She has been working on the authentication system for 5 years.",
-                    "context": "team introduction"
+                    "context": "team introduction",
                 }
-            ]
-        }
+            ],
+        },
     )
     assert response.status_code == 200
     result = response.json()
@@ -748,10 +705,7 @@ async def test_async_retain(api_client):
 
     while elapsed < max_wait_seconds:
         # Check if memories are stored
-        response = await api_client.get(
-            f"/v1/default/banks/{test_bank_id}/memories/list",
-            params={"limit": 10}
-        )
+        response = await api_client.get(f"/v1/default/banks/{test_bank_id}/memories/list", params={"limit": 10})
         assert response.status_code == 200
         items = response.json()["items"]
 
@@ -767,10 +721,7 @@ async def test_async_retain(api_client):
     # Verify we can recall the stored memory
     response = await api_client.post(
         f"/v1/default/banks/{test_bank_id}/memories/recall",
-        json={
-            "query": "Who works at TechCorp?",
-            "thinking_budget": 30
-        }
+        json={"query": "Who works at TechCorp?", "thinking_budget": 30},
     )
     assert response.status_code == 200
     search_results = response.json()
@@ -803,20 +754,14 @@ async def test_async_retain_parallel(api_client):
         {
             "content": f"{people[i]} is a software engineer who works at {companies[i]} and specializes in Python development.",
             "context": f"employee profile {i}",
-            "document_id": f"doc_{i}"
+            "document_id": f"doc_{i}",
         }
         for i in range(num_documents)
     ]
 
     # Submit all async retain operations in parallel
     async def submit_async_retain(doc):
-        return await api_client.post(
-            f"/v1/default/banks/{test_bank_id}/memories",
-            json={
-                "async": True,
-                "items": [doc]
-            }
-        )
+        return await api_client.post(f"/v1/default/banks/{test_bank_id}/memories", json={"async": True, "items": [doc]})
 
     # Run all submissions concurrently
     responses = await asyncio.gather(*[submit_async_retain(doc) for doc in documents])
@@ -851,7 +796,9 @@ async def test_async_retain_parallel(api_client):
         await asyncio.sleep(poll_interval)
         elapsed += poll_interval
 
-    assert all_docs_processed, f"Expected {num_documents} documents, but only {len(docs)} were processed within {max_wait_seconds} seconds"
+    assert all_docs_processed, (
+        f"Expected {num_documents} documents, but only {len(docs)} were processed within {max_wait_seconds} seconds"
+    )
 
     # Verify exact document count
     response = await api_client.get(f"/v1/default/banks/{test_bank_id}/documents")
@@ -865,10 +812,7 @@ async def test_async_retain_parallel(api_client):
         assert f"doc_{i}" in doc_ids, f"Document doc_{i} not found"
 
     # Verify memories were created for all documents
-    response = await api_client.get(
-        f"/v1/default/banks/{test_bank_id}/memories/list",
-        params={"limit": 100}
-    )
+    response = await api_client.get(f"/v1/default/banks/{test_bank_id}/memories/list", params={"limit": 100})
     assert response.status_code == 200
     memories = response.json()["items"]
     assert len(memories) >= num_documents, f"Expected at least {num_documents} memories, got {len(memories)}"
@@ -877,10 +821,7 @@ async def test_async_retain_parallel(api_client):
     for i in [0, num_documents - 1]:  # Check first and last
         response = await api_client.post(
             f"/v1/default/banks/{test_bank_id}/memories/recall",
-            json={
-                "query": f"Who works at Company{i}?",
-                "thinking_budget": 30
-            }
+            json={"query": f"Who works at Company{i}?", "thinking_budget": 30},
         )
         assert response.status_code == 200
         results = response.json()["results"]
@@ -904,18 +845,12 @@ async def test_reflect_structured_output(api_client):
             "items": [
                 {
                     "content": "Alice is a senior machine learning engineer with 8 years of experience.",
-                    "context": "team member info"
+                    "context": "team member info",
                 },
-                {
-                    "content": "Bob is a junior data scientist who joined last month.",
-                    "context": "team member info"
-                },
-                {
-                    "content": "The team uses Python and TensorFlow for most projects.",
-                    "context": "tech stack"
-                }
+                {"content": "Bob is a junior data scientist who joined last month.", "context": "team member info"},
+                {"content": "The team uses Python and TensorFlow for most projects.", "context": "tech stack"},
             ]
-        }
+        },
     )
     assert response.status_code == 200
 
@@ -930,26 +865,20 @@ async def test_reflect_structured_output(api_client):
                     "properties": {
                         "name": {"type": "string"},
                         "role": {"type": "string"},
-                        "experience_level": {"type": "string"}
-                    }
-                }
+                        "experience_level": {"type": "string"},
+                    },
+                },
             },
-            "technologies": {
-                "type": "array",
-                "items": {"type": "string"}
-            },
-            "summary": {"type": "string"}
+            "technologies": {"type": "array", "items": {"type": "string"}},
+            "summary": {"type": "string"},
         },
-        "required": ["team_members", "summary"]
+        "required": ["team_members", "summary"],
     }
 
     # Call reflect with response_schema
     response = await api_client.post(
         f"/v1/default/banks/{test_bank_id}/reflect",
-        json={
-            "query": "Give me an overview of the team and their tech stack",
-            "response_schema": response_schema
-        }
+        json={"query": "Give me an overview of the team and their tech stack", "response_schema": response_schema},
     )
     assert response.status_code == 200
     result = response.json()
@@ -976,23 +905,13 @@ async def test_reflect_without_structured_output(api_client):
     # Store a memory
     response = await api_client.post(
         f"/v1/default/banks/{test_bank_id}/memories",
-        json={
-            "items": [
-                {
-                    "content": "The project deadline is next Friday.",
-                    "context": "project timeline"
-                }
-            ]
-        }
+        json={"items": [{"content": "The project deadline is next Friday.", "context": "project timeline"}]},
     )
     assert response.status_code == 200
 
     # Call reflect without response_schema
     response = await api_client.post(
-        f"/v1/default/banks/{test_bank_id}/reflect",
-        json={
-            "query": "When is the project deadline?"
-        }
+        f"/v1/default/banks/{test_bank_id}/reflect", json={"query": "When is the project deadline?"}
     )
     assert response.status_code == 200
     result = response.json()
@@ -1018,20 +937,16 @@ async def test_reflect_with_max_tokens(api_client):
             "items": [
                 {
                     "content": "Python is a popular programming language for data science and machine learning.",
-                    "context": "tech"
+                    "context": "tech",
                 }
             ]
-        }
+        },
     )
     assert response.status_code == 200
 
     # Call reflect with custom max_tokens
     response = await api_client.post(
-        f"/v1/default/banks/{test_bank_id}/reflect",
-        json={
-            "query": "What is Python used for?",
-            "max_tokens": 500
-        }
+        f"/v1/default/banks/{test_bank_id}/reflect", json={"query": "What is Python used for?", "max_tokens": 500}
     )
     assert response.status_code == 200
     result = response.json()
@@ -1053,23 +968,13 @@ async def test_reflect_returns_token_usage(api_client):
     # Store a memory to reflect on
     response = await api_client.post(
         f"/v1/default/banks/{test_bank_id}/memories",
-        json={
-            "items": [
-                {
-                    "content": "The capital of France is Paris.",
-                    "context": "geography"
-                }
-            ]
-        }
+        json={"items": [{"content": "The capital of France is Paris.", "context": "geography"}]},
     )
     assert response.status_code == 200
 
     # Call reflect
     response = await api_client.post(
-        f"/v1/default/banks/{test_bank_id}/reflect",
-        json={
-            "query": "What is the capital of France?"
-        }
+        f"/v1/default/banks/{test_bank_id}/reflect", json={"query": "What is the capital of France?"}
     )
     assert response.status_code == 200
     result = response.json()
@@ -1093,7 +998,9 @@ async def test_reflect_returns_token_usage(api_client):
     assert usage["output_tokens"] >= 0, f"Expected output_tokens >= 0, got {usage['output_tokens']}"
     assert usage["total_tokens"] == usage["input_tokens"] + usage["output_tokens"]
 
-    print(f"Reflect token usage: input={usage['input_tokens']}, output={usage['output_tokens']}, total={usage['total_tokens']}")
+    print(
+        f"Reflect token usage: input={usage['input_tokens']}, output={usage['output_tokens']}, total={usage['total_tokens']}"
+    )
 
 
 @pytest.mark.asyncio
@@ -1112,10 +1019,10 @@ async def test_retain_returns_token_usage(api_client):
             "items": [
                 {
                     "content": "Alice is a software engineer at TechCorp. She specializes in machine learning.",
-                    "context": "team introduction"
+                    "context": "team introduction",
                 }
             ]
-        }
+        },
     )
     assert response.status_code == 200
     result = response.json()
@@ -1138,7 +1045,9 @@ async def test_retain_returns_token_usage(api_client):
     assert usage["output_tokens"] >= 0, f"Expected output_tokens >= 0, got {usage['output_tokens']}"
     assert usage["total_tokens"] == usage["input_tokens"] + usage["output_tokens"]
 
-    print(f"Retain token usage: input={usage['input_tokens']}, output={usage['output_tokens']}, total={usage['total_tokens']}")
+    print(
+        f"Retain token usage: input={usage['input_tokens']}, output={usage['output_tokens']}, total={usage['total_tokens']}"
+    )
 
 
 @pytest.mark.asyncio
@@ -1153,15 +1062,7 @@ async def test_retain_async_no_usage(api_client):
     # Store memory asynchronously
     response = await api_client.post(
         f"/v1/default/banks/{test_bank_id}/memories",
-        json={
-            "async": True,
-            "items": [
-                {
-                    "content": "Bob is a data scientist.",
-                    "context": "team introduction"
-                }
-            ]
-        }
+        json={"async": True, "items": [{"content": "Bob is a data scientist.", "context": "team introduction"}]},
     )
     assert response.status_code == 200
     result = response.json()
@@ -1193,9 +1094,7 @@ async def test_version_endpoint_returns_correct_version(api_client):
     assert "features" in result, "Response should include 'features' field"
 
     # Verify the version matches the package version
-    assert result["api_version"] == __version__, (
-        f"API version should be {__version__}, got {result['api_version']}"
-    )
+    assert result["api_version"] == __version__, f"API version should be {__version__}, got {result['api_version']}"
 
     # Verify features field structure
     features = result["features"]
@@ -1216,22 +1115,18 @@ async def test_retain_with_timestamp_async(api_client, test_bank_id):
         f"/v1/default/banks/{test_bank_id}/memories",
         json={
             "items": [
-                {
-                    "content": "Test memory with timestamp",
-                    "context": "test",
-                    "timestamp": "2026-01-30T11:45:00Z"
-                }
+                {"content": "Test memory with timestamp", "context": "test", "timestamp": "2026-01-30T11:45:00Z"}
             ],
-            "async": True
-        }
+            "async": True,
+        },
     )
-    
+
     assert response.status_code == 200, f"Expected 200, got {response.status_code}: {response.text}"
     data = response.json()
     assert data["success"] is True
     assert data["async"] is True
     assert "operation_id" in data
-    
+
 
 @pytest.mark.asyncio
 async def test_retain_with_timestamp_sync(api_client, test_bank_id):
@@ -1240,21 +1135,17 @@ async def test_retain_with_timestamp_sync(api_client, test_bank_id):
         f"/v1/default/banks/{test_bank_id}/memories",
         json={
             "items": [
-                {
-                    "content": "Test memory with timestamp sync",
-                    "context": "test", 
-                    "timestamp": "2026-01-30T11:45:00Z"
-                }
+                {"content": "Test memory with timestamp sync", "context": "test", "timestamp": "2026-01-30T11:45:00Z"}
             ],
-            "async": False
-        }
+            "async": False,
+        },
     )
-    
+
     assert response.status_code == 200, f"Expected 200, got {response.status_code}: {response.text}"
     data = response.json()
     assert data["success"] is True
     assert data["async"] is False
-    
+
 
 @pytest.mark.asyncio
 async def test_retain_with_multiple_timestamps(api_client, test_bank_id):
@@ -1265,20 +1156,20 @@ async def test_retain_with_multiple_timestamps(api_client, test_bank_id):
             "items": [
                 {
                     "content": "Event 1",
-                    "timestamp": "2026-01-30T11:45:00Z"  # With Z
+                    "timestamp": "2026-01-30T11:45:00Z",  # With Z
                 },
                 {
-                    "content": "Event 2", 
-                    "timestamp": "2026-01-30T12:00:00+00:00"  # With timezone
+                    "content": "Event 2",
+                    "timestamp": "2026-01-30T12:00:00+00:00",  # With timezone
                 },
                 {
                     "content": "Event 3"  # No timestamp
-                }
+                },
             ],
-            "async": True
-        }
+            "async": True,
+        },
     )
-    
+
     assert response.status_code == 200, f"Expected 200, got {response.status_code}: {response.text}"
     data = response.json()
     assert data["success"] is True
@@ -1296,25 +1187,25 @@ async def test_retain_with_timestamp_async_complete_processing(api_client, test_
                 {
                     "content": "The quarterly meeting was held on January 30th 2026",
                     "context": "meetings",
-                    "timestamp": "2026-01-30T11:45:00Z"
+                    "timestamp": "2026-01-30T11:45:00Z",
                 }
             ],
-            "async": True
-        }
+            "async": True,
+        },
     )
-    
+
     assert response.status_code == 200, f"Expected 200, got {response.status_code}: {response.text}"
     data = response.json()
     assert data["success"] is True
     assert data["async"] is True
     operation_id = data["operation_id"]
-    
+
     # Wait for async processing to complete (poll operation status)
     max_wait_seconds = 30
     poll_interval = 0.5
     elapsed = 0
     operation_completed = False
-    
+
     while elapsed < max_wait_seconds:
         response = await api_client.get(f"/v1/default/banks/{test_bank_id}/operations/{operation_id}")
         if response.status_code == 200:
@@ -1324,17 +1215,14 @@ async def test_retain_with_timestamp_async_complete_processing(api_client, test_
                 break
             elif op_status.get("status") == "failed":
                 raise AssertionError(f"Operation failed: {op_status.get('error_message')}")
-        
+
         await asyncio.sleep(poll_interval)
         elapsed += poll_interval
-    
+
     assert operation_completed, f"Async operation did not complete within {max_wait_seconds} seconds"
-    
+
     # Verify memories were actually stored
-    response = await api_client.get(
-        f"/v1/default/banks/{test_bank_id}/memories/list",
-        params={"limit": 10}
-    )
+    response = await api_client.get(f"/v1/default/banks/{test_bank_id}/memories/list", params={"limit": 10})
     assert response.status_code == 200
     items = response.json()["items"]
     assert len(items) > 0, "Should have stored memories after async processing"
@@ -1436,8 +1324,6 @@ async def test_full_api_workflow_llm_quality(api_client_real_llm):
     version verifies API plumbing, this one verifies the LLM actually reasons
     over the stored memories and produces a relevant answer.
     """
-    from tests.llm_judge import assert_meets_criteria
-
     test_bank_id = f"llm_workflow_{datetime.now().timestamp()}"
 
     # Store memories about people
@@ -1487,8 +1373,6 @@ async def test_reflect_structured_output_llm_quality(api_client_real_llm):
     mock version verifies the endpoint returns a dict, this one verifies the LLM
     actually populates the schema-required keys (team_members, summary).
     """
-    from tests.llm_judge import assert_meets_criteria
-
     test_bank_id = f"llm_structured_{datetime.now().timestamp()}"
 
     # Store memories
@@ -1550,6 +1434,7 @@ async def test_reflect_structured_output_llm_quality(api_client_real_llm):
 
     # Semantic check — verify the content is actually relevant
     import json
+
     await assert_meets_criteria(
         response=json.dumps(structured),
         criteria=(

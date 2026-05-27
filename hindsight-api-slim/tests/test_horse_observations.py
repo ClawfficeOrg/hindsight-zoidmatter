@@ -15,6 +15,7 @@ import pytest
 from hindsight_api.config import _get_raw_config
 from hindsight_api.engine.consolidation import consolidator as consolidator_mod
 from hindsight_api.engine.memory_engine import MemoryEngine
+from tests.llm_judge import assert_meets_criteria
 
 
 @pytest.fixture(autouse=True)
@@ -96,18 +97,20 @@ async def _instrumented_consolidate(
         max_observations_per_scope=max_observations_per_scope,
     )
 
-    _debug_log.append(_ConsolidationDebugEntry(
-        facts=facts_lines,
-        observations_text=observations_text,
-        response=_ConsolidationResponse(
-            creates=[_ActionLog(text=c.text, source_fact_ids=c.source_fact_ids) for c in result.creates],
-            updates=[
-                _ActionLog(text=u.text, observation_id=u.observation_id, source_fact_ids=u.source_fact_ids)
-                for u in result.updates
-            ],
-            deletes=[_ActionLog(text="", observation_id=d.observation_id) for d in result.deletes],
-        ),
-    ))
+    _debug_log.append(
+        _ConsolidationDebugEntry(
+            facts=facts_lines,
+            observations_text=observations_text,
+            response=_ConsolidationResponse(
+                creates=[_ActionLog(text=c.text, source_fact_ids=c.source_fact_ids) for c in result.creates],
+                updates=[
+                    _ActionLog(text=u.text, observation_id=u.observation_id, source_fact_ids=u.source_fact_ids)
+                    for u in result.updates
+                ],
+                deletes=[_ActionLog(text="", observation_id=d.observation_id) for d in result.deletes],
+            ),
+        )
+    )
 
     return result
 
@@ -134,11 +137,11 @@ def _print_consolidation_debug(entry: _ConsolidationDebugEntry, index: int) -> N
     print("\n  LLM RESPONSE:")
     if resp.creates:
         for c in resp.creates:
-            print(f"    CREATE: \"{c.text}\" (from facts: {[fid[:8] + '..' for fid in c.source_fact_ids]})")
+            print(f'    CREATE: "{c.text}" (from facts: {[fid[:8] + ".." for fid in c.source_fact_ids]})')
     if resp.updates:
         for u in resp.updates:
             print(
-                f"    UPDATE [{u.observation_id[:8]}..]: \"{u.text}\""
+                f'    UPDATE [{u.observation_id[:8]}..]: "{u.text}"'
                 f" (from facts: {[fid[:8] + '..' for fid in u.source_fact_ids]})"
             )
     if resp.deletes:
@@ -206,9 +209,9 @@ async def test_horse_farm_observation_history(memory_real_llm: MemoryEngine, req
 
     try:
         for i, content in enumerate(messages):
-            print(f"\n{'='*80}")
-            print(f"RETAIN #{i+1} ({event_dates[i].date()}): {content}")
-            print(f"{'='*80}")
+            print(f"\n{'=' * 80}")
+            print(f"RETAIN #{i + 1} ({event_dates[i].date()}): {content}")
+            print(f"{'=' * 80}")
 
             log_start = len(_debug_log)
 
@@ -245,9 +248,9 @@ async def test_horse_farm_observation_history(memory_real_llm: MemoryEngine, req
         consolidator_mod._consolidate_batch_with_llm = _original_consolidate
 
     # Final summary
-    print(f"\n{'='*80}")
+    print(f"\n{'=' * 80}")
     print("FINAL STATE")
-    print(f"{'='*80}")
+    print(f"{'=' * 80}")
     pool = await memory._get_pool()
     async with pool.acquire() as conn:
         observations = await conn.fetch(
@@ -270,9 +273,9 @@ async def test_horse_farm_observation_history(memory_real_llm: MemoryEngine, req
                 print(f"  - [proof={obs['proof_count']}] {obs['text']}")
 
     # Create a mental model to synthesize the observations
-    print(f"\n{'='*80}")
+    print(f"\n{'=' * 80}")
     print("MENTAL MODEL")
-    print(f"{'='*80}")
+    print(f"{'=' * 80}")
 
     # Patch reflect _execute_tool to log tool inputs/outputs
     from hindsight_api.engine.reflect import agent as reflect_agent_mod
@@ -285,7 +288,9 @@ async def test_horse_farm_observation_history(memory_real_llm: MemoryEngine, req
         print(f"\n  [REFLECT TOOL] {normalized}(args={args})")
         if isinstance(result, dict):
             if "observations" in result:
-                print(f"    Observations returned ({result.get('count', '?')}, freshness={result.get('freshness', '?')}):")
+                print(
+                    f"    Observations returned ({result.get('count', '?')}, freshness={result.get('freshness', '?')}):"
+                )
                 for obs in result.get("observations", []):
                     print(f"      - [proof={obs.get('proof_count', '?')}] {obs.get('text', '?')}")
             if "memories" in result:
@@ -354,8 +359,6 @@ async def test_horse_farm_observation_history(memory_real_llm: MemoryEngine, req
     # with no follow-up events), so accept ≥4 of 5 names rather than all 5 —
     # the assertion is whether the pipeline synthesizes the herd story
     # end-to-end, not perfect recall of every horse.
-    from tests.llm_judge import assert_meets_criteria
-
     await assert_meets_criteria(
         response=content,
         criteria=(

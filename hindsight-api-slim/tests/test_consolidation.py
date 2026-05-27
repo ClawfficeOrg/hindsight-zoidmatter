@@ -24,6 +24,7 @@ from hindsight_api.engine.reflect.tools import (
     tool_search_mental_models,
     tool_search_observations,
 )
+from tests.llm_judge import assert_meets_criteria
 
 
 @pytest.fixture(autouse=True)
@@ -388,16 +389,12 @@ class TestConsolidationIntegration:
                 people_mentioned = sum(1 for name in ["john", "mary", "bob"] if name in text)
                 assert people_mentioned <= 1, f"Observation should not merge different people: {obs['text']}"
 
-            obs_listing = "\n".join(
-                f"Observation {i + 1}: {obs['text']}" for i, obs in enumerate(observations)
-            )
+            obs_listing = "\n".join(f"Observation {i + 1}: {obs['text']}" for i, obs in enumerate(observations))
 
         # Semantic backup: catch the case where the LLM merges facts about different
         # people using pronouns or referent shifts that bypass the proper-noun check
         # (e.g. an observation that says "They each live in different cities and one
         # works at Google").
-        from tests.llm_judge import assert_meets_criteria
-
         await assert_meets_criteria(
             response=obs_listing,
             criteria=(
@@ -483,9 +480,7 @@ class TestConsolidationIntegration:
 
             # Format as numbered list rather than pipe-separated — weaker judge
             # models read pipe-joins as a single conflated statement.
-            obs_listing = "\n".join(
-                f"Observation {i + 1}: {obs['text']}" for i, obs in enumerate(observations)
-            )
+            obs_listing = "\n".join(f"Observation {i + 1}: {obs['text']}" for i, obs in enumerate(observations))
             all_source_ids = []
             for obs in observations:
                 all_source_ids.extend(obs["source_memory_ids"] or [])
@@ -495,8 +490,6 @@ class TestConsolidationIntegration:
         # text path semantically — without it, paraphrases like "no longer enjoys" or
         # "switched away from" would fail a literal substring check.
         if len(all_source_ids) <= 1:
-            from tests.llm_judge import assert_meets_criteria
-
             await assert_meets_criteria(
                 response=obs_listing,
                 criteria=(
@@ -540,8 +533,12 @@ class TestConsolidationIntegration:
             await memory.wait_for_background_tasks()
 
             # Two clearly distinct facts that should stay separate
-            await memory.retain_async(bank_id=bank_id, content="Sarah is a product manager.", request_context=request_context)
-            await memory.retain_async(bank_id=bank_id, content="Sarah is based in Austin, Texas.", request_context=request_context)
+            await memory.retain_async(
+                bank_id=bank_id, content="Sarah is a product manager.", request_context=request_context
+            )
+            await memory.retain_async(
+                bank_id=bank_id, content="Sarah is based in Austin, Texas.", request_context=request_context
+            )
 
             await memory.wait_for_background_tasks()
 
@@ -556,13 +553,10 @@ class TestConsolidationIntegration:
 
             # 5 input facts, 3 are near-duplicates — real consolidation must merge some
             assert obs_count < 5, (
-                f"Expected fewer than 5 observations after merging near-duplicates. "
-                f"Got {obs_count}: {obs_texts}"
+                f"Expected fewer than 5 observations after merging near-duplicates. Got {obs_count}: {obs_texts}"
             )
             # The two distinct facts should still have representation
-            assert obs_count >= 2, (
-                f"Expected at least 2 observations for distinct facts. Got {obs_count}: {obs_texts}"
-            )
+            assert obs_count >= 2, f"Expected at least 2 observations for distinct facts. Got {obs_count}: {obs_texts}"
         finally:
             await memory.delete_bank(bank_id, request_context=request_context)
 
@@ -1477,8 +1471,7 @@ class TestObservationDrillDown:
             )
 
         assert len(source_memories) >= 1, (
-            f"source_memory_ids should point to valid memories. "
-            f"IDs: {all_source_ids}, Found: {len(source_memories)}"
+            f"source_memory_ids should point to valid memories. IDs: {all_source_ids}, Found: {len(source_memories)}"
         )
 
         # The source memories should contain our original content
@@ -1862,7 +1855,9 @@ class TestMentalModelRefreshAfterConsolidation:
 
     @pytest.mark.asyncio
     @pytest.mark.hs_llm_core
-    async def test_graph_endpoint_observations_inherit_links_and_entities(self, memory_real_llm: MemoryEngine, request_context):
+    async def test_graph_endpoint_observations_inherit_links_and_entities(
+        self, memory_real_llm: MemoryEngine, request_context
+    ):
         """Test that graph endpoint shows links and entities for observations filtered by type.
 
         When filtering graph by type=observation:
@@ -3453,9 +3448,7 @@ async def test_targeted_consolidation_contains_semantics(memory: MemoryEngine, r
     try:
         async with memory._pool.acquire() as conn:
             # Memory with two tags
-            await _insert_memories_with_tags(
-                conn, bank_id, ["Alice works on infra."], tags=["user:alice", "team:eng"]
-            )
+            await _insert_memories_with_tags(conn, bank_id, ["Alice works on infra."], tags=["user:alice", "team:eng"])
             await _insert_memories_with_tags(conn, bank_id, ["Bob likes swimming."], tags=["user:bob"])
 
         # Scope is ["user:alice"] — should match the multi-tag memory

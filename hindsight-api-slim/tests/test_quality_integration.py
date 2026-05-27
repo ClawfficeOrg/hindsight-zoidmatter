@@ -14,6 +14,7 @@ import uuid
 import pytest
 
 from hindsight_api.engine.memory_engine import Budget, MemoryEngine
+from tests.llm_judge import assert_meets_criteria
 
 
 @pytest.mark.hs_llm_core
@@ -32,8 +33,6 @@ class TestEndToEndPipeline:
         Given a set of facts about a person, reflect must produce a response that
         demonstrates it actually used those facts — not a generic non-answer.
         """
-        from tests.llm_judge import assert_meets_criteria
-
         bank_id = f"test-e2e-roundtrip-{uuid.uuid4().hex[:8]}"
         try:
             await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
@@ -78,18 +77,12 @@ class TestEndToEndPipeline:
     @pytest.mark.flaky(reruns=2, reruns_delay=2)
     async def test_reflect_answers_specific_factual_query(self, memory: MemoryEngine, request_context):
         """Reflect must retrieve and state specific retained facts when asked directly."""
-        from tests.llm_judge import assert_meets_criteria
-
         bank_id = f"test-e2e-factual-{uuid.uuid4().hex[:8]}"
         try:
             await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
             await memory.retain_async(
                 bank_id=bank_id,
-                content=(
-                    "The project deadline is March 15th. "
-                    "The client is Acme Corp. "
-                    "The total budget is $250,000."
-                ),
+                content=("The project deadline is March 15th. The client is Acme Corp. The total budget is $250,000."),
                 context="project notes",
                 request_context=request_context,
             )
@@ -102,8 +95,7 @@ class TestEndToEndPipeline:
             await assert_meets_criteria(
                 response=reflect_result.text,
                 criteria=(
-                    "The response correctly identifies Acme Corp as the client "
-                    "and $250,000 (or 250k) as the budget."
+                    "The response correctly identifies Acme Corp as the client and $250,000 (or 250k) as the budget."
                 ),
                 msg=f"Reflect should state specific retained facts. Got: {reflect_result.text[:500]}",
             )
@@ -114,8 +106,6 @@ class TestEndToEndPipeline:
     @pytest.mark.flaky(reruns=2, reruns_delay=2)
     async def test_reflect_handles_query_with_no_relevant_facts(self, memory: MemoryEngine, request_context):
         """Reflect asked about a topic absent from memory should acknowledge the gap."""
-        from tests.llm_judge import assert_meets_criteria
-
         bank_id = f"test-e2e-unknown-{uuid.uuid4().hex[:8]}"
         try:
             await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
@@ -162,9 +152,7 @@ class TestDispositionInfluence:
 
     @pytest.mark.asyncio
     @pytest.mark.flaky(reruns=2, reruns_delay=2)
-    async def test_high_skepticism_response_is_more_hedged_than_low(
-        self, memory: MemoryEngine, request_context
-    ):
+    async def test_high_skepticism_response_is_more_hedged_than_low(self, memory: MemoryEngine, request_context):
         """Skepticism=5 should produce a measurably more hedged response than skepticism=1.
 
         A string-inequality check would pass purely from LLM sampling variance, so we
@@ -172,8 +160,6 @@ class TestDispositionInfluence:
         This catches the case where the disposition trait isn't wired into the prompt
         at all — both responses would then look equally confident.
         """
-        from tests.llm_judge import assert_meets_criteria
-
         claim = "Sam is supposedly the most productive engineer on the team by a wide margin."
         query = "What can you tell me about Sam's productivity?"
 

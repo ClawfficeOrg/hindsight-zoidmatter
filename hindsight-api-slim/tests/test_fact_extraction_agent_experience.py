@@ -3,6 +3,7 @@ Test that first-person agent experiences are classified as 'experience' fact_typ
 not 'world'. This is critical for AI agent systems that store their own operational
 experiences (debugging, code changes, user interactions) separately from world knowledge.
 """
+
 from datetime import datetime
 
 import pytest
@@ -10,6 +11,7 @@ import pytest
 from hindsight_api import LLMConfig
 from hindsight_api.config import _get_raw_config
 from hindsight_api.engine.retain.fact_extraction import extract_facts_from_text
+from tests.llm_judge import assert_meets_criteria
 
 pytestmark = pytest.mark.hs_llm_core
 
@@ -66,8 +68,6 @@ I added a setup fixture that ensures the pool is warmed up, and all 47 tests pas
 
         # Use LLM judge to evaluate classification quality — the exact ratio
         # of experience vs world facts is non-deterministic across providers.
-        from tests.llm_judge import assert_meets_criteria
-
         facts_summary = "\n".join(f"- [{f.fact_type}] {f.fact}" for f in facts)
         await assert_meets_criteria(
             response=facts_summary,

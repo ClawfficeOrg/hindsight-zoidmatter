@@ -21,6 +21,7 @@ LLM might phrase preserved emotion as "elated" instead of "thrilled", and a
 literal substring check would flake.  Structural assertions (date fields,
 fact counts, fact_type classification) stay as direct asserts.
 """
+
 from datetime import UTC, datetime
 
 import pytest
@@ -28,12 +29,14 @@ import pytest
 from hindsight_api import LLMConfig
 from hindsight_api.config import _get_raw_config
 from hindsight_api.engine.retain.fact_extraction import extract_facts_from_text
+from tests.llm_judge import assert_meets_criteria
 
 pytestmark = pytest.mark.hs_llm_core
 
 # =============================================================================
 # DIMENSION PRESERVATION TESTS
 # =============================================================================
+
 
 class TestDimensionPreservation:
     """Tests that fact extraction preserves all information dimensions."""
@@ -66,8 +69,6 @@ Marcus felt anxious about the upcoming interview.
 
         assert len(facts) > 0, "Should extract at least one fact"
         all_facts_text = " ".join(f.fact for f in facts)
-
-        from tests.llm_judge import assert_meets_criteria
 
         await assert_meets_criteria(
             response=all_facts_text,
@@ -108,8 +109,6 @@ The music was so loud I could barely hear myself think.
         assert len(facts) > 0, "Should extract at least one fact"
         all_facts_text = " ".join(f.fact for f in facts)
 
-        from tests.llm_judge import assert_meets_criteria
-
         await assert_meets_criteria(
             response=all_facts_text,
             criteria=(
@@ -148,8 +147,6 @@ Maybe we should reconsider the timeline.
 
         assert len(facts) > 0, "Should extract at least one fact"
         all_facts_text = " ".join(f.fact for f in facts)
-
-        from tests.llm_judge import assert_meets_criteria
 
         await assert_meets_criteria(
             response=all_facts_text,
@@ -192,8 +189,6 @@ I'm unable to attend the conference due to scheduling conflicts.
         assert len(facts) > 0, "Should extract at least one fact"
         all_facts_text = " ".join(f.fact for f in facts)
 
-        from tests.llm_judge import assert_meets_criteria
-
         await assert_meets_criteria(
             response=all_facts_text,
             criteria=(
@@ -234,8 +229,6 @@ Unlike last year, we're ahead of schedule.
         assert len(facts) > 0, "Should extract at least one fact"
         all_facts_text = " ".join(f.fact for f in facts)
 
-        from tests.llm_judge import assert_meets_criteria
-
         await assert_meets_criteria(
             response=all_facts_text,
             criteria=(
@@ -274,8 +267,6 @@ She's enthusiastic about the opportunity.
 
         assert len(facts) > 0, "Should extract at least one fact"
         all_facts_text = " ".join(f.fact for f in facts)
-
-        from tests.llm_judge import assert_meets_criteria
 
         await assert_meets_criteria(
             response=all_facts_text,
@@ -317,8 +308,6 @@ I'm planning to switch careers because I'm not fulfilled in my current role.
         assert len(facts) > 0, "Should extract at least one fact"
         all_facts_text = " ".join(f.fact for f in facts)
 
-        from tests.llm_judge import assert_meets_criteria
-
         await assert_meets_criteria(
             response=all_facts_text,
             criteria=(
@@ -359,8 +348,6 @@ Family is the most important thing to her.
 
         assert len(facts) > 0, "Should extract at least one fact"
         all_facts_text = " ".join(f.fact for f in facts)
-
-        from tests.llm_judge import assert_meets_criteria
 
         await assert_meets_criteria(
             response=all_facts_text,
@@ -409,12 +396,9 @@ I prefer presenting in person rather than virtually because I can read the room 
         # Check no vague temporal terms (structural check — not LLM-dependent)
         prohibited_terms = ["recently", "soon", "lately"]
         found_prohibited = [term for term in prohibited_terms if term in all_facts_text.lower()]
-        assert len(found_prohibited) == 0, \
-            f"Should NOT use vague temporal terms. Found: {found_prohibited}"
+        assert len(found_prohibited) == 0, f"Should NOT use vague temporal terms. Found: {found_prohibited}"
 
         # Check emotional and preferential dimensions via LLM judge
-        from tests.llm_judge import assert_meets_criteria
-
         await assert_meets_criteria(
             response=all_facts_text,
             criteria=(
@@ -431,10 +415,10 @@ I prefer presenting in person rather than virtually because I can read the room 
         )
 
 
-
 # =============================================================================
 # TEMPORAL CONVERSION TESTS
 # =============================================================================
+
 
 class TestTemporalConversion:
     """Tests for temporal extraction and date conversion."""
@@ -475,15 +459,12 @@ I'm planning to visit Tokyo next month.
         prohibited_terms = ["recently", "lately", "a while ago", "some time ago"]
         found_prohibited = [term for term in prohibited_terms if term in all_facts_text]
 
-        assert len(found_prohibited) == 0, (
-            f"Should NOT use vague temporal terms. Found: {found_prohibited}"
-        )
+        assert len(found_prohibited) == 0, f"Should NOT use vague temporal terms. Found: {found_prohibited}"
 
         # Check that at least one fact has a valid occurred_start date
         facts_with_temporal = [f for f in facts if f.occurred_start]
         assert len(facts_with_temporal) >= 1, (
-            f"At least one fact should have temporal data (occurred_start). "
-            f"Facts: {[f.fact for f in facts]}"
+            f"At least one fact should have temporal data (occurred_start). Facts: {[f.fact for f in facts]}"
         )
 
     @pytest.mark.asyncio
@@ -532,8 +513,8 @@ with a concert surrounded by music, joy and the warm summer breeze.
                 fact_date_str = birthday_fact.occurred_start
                 assert fact_date_str is not None, "occurred_start should not be None for temporal events"
 
-                if 'T' in fact_date_str:
-                    fact_date = datetime.fromisoformat(fact_date_str.replace('Z', '+00:00'))
+                if "T" in fact_date_str:
+                    fact_date = datetime.fromisoformat(fact_date_str.replace("Z", "+00:00"))
                 else:
                     fact_date = datetime.fromisoformat(fact_date_str)
 
@@ -599,17 +580,15 @@ It was a beautiful day and I plan to make this a regular habit.
         if facts_with_date:
             jogging_fact = facts_with_date[0]
             fact_date_str = jogging_fact.occurred_start
-            if 'T' in fact_date_str:
-                fact_date = datetime.fromisoformat(fact_date_str.replace('Z', '+00:00'))
+            if "T" in fact_date_str:
+                fact_date = datetime.fromisoformat(fact_date_str.replace("Z", "+00:00"))
             else:
                 fact_date = datetime.fromisoformat(fact_date_str)
 
             assert fact_date.year == 2024, "Year should be 2024"
             assert fact_date.month == 11, "Month should be November"
             # Accept day 12 (ideal: yesterday) or 13 (conversation date) as valid
-            assert fact_date.day in (12, 13), (
-                f"Day should be 12 or 13 (around Nov 13 event), but got {fact_date.day}."
-            )
+            assert fact_date.day in (12, 13), f"Day should be 12 or 13 (around Nov 13 event), but got {fact_date.day}."
 
         all_facts_text_lower = " ".join(f.fact.lower() for f in facts)
         all_facts_text = " ".join(f.fact for f in facts)
@@ -620,8 +599,6 @@ It was a beautiful day and I plan to make this a regular habit.
 
         # Semantic: content preservation AND date conversion go through the judge so
         # paraphrases ("ran" for "jog", "Nov 12 2024" for "November 12") still satisfy.
-        from tests.llm_judge import assert_meets_criteria
-
         await assert_meets_criteria(
             response=all_facts_text,
             criteria=(
@@ -728,6 +705,7 @@ It was a beautiful day and I plan to make this a regular habit.
 # LOGICAL INFERENCE TESTS
 # =============================================================================
 
+
 class TestLogicalInference:
     """Tests that the system makes logical inferences to connect related information."""
 
@@ -779,13 +757,10 @@ great time! Every time I see it, I can't help but smile.
         # too strict here (it kept reading the facts and asking for explicit
         # connection prose), so this is a deterministic substring check —
         # same shape as the original pre-migration assertion.
-        assert "karlie" in all_facts_text, (
-            f"Should mention Karlie. Facts: {[f.fact for f in facts]}"
-        )
+        assert "karlie" in all_facts_text, f"Should mention Karlie. Facts: {[f.fact for f in facts]}"
         loss_terms = ("lost", "loss", "losing", "passed", "died", "death")
         assert any(t in all_facts_text for t in loss_terms), (
-            f"Should mention the loss (one of {loss_terms}). "
-            f"Facts: {[f.fact for f in facts]}"
+            f"Should mention the loss (one of {loss_terms}). Facts: {[f.fact for f in facts]}"
         )
 
     @pytest.mark.asyncio
@@ -831,8 +806,8 @@ I've learned so much from it.
                 bad_facts.append(f.fact)
 
         assert not bad_facts, (
-            f"Pronoun 'it' should be resolved to a specific noun anchor in every "
-            f"quality-describing fact, but these facts lack a project/work/ML anchor:\n"
+            "Pronoun 'it' should be resolved to a specific noun anchor in every "
+            "quality-describing fact, but these facts lack a project/work/ML anchor:\n"
             + "\n".join(f"  - {bf}" for bf in bad_facts)
             + f"\nAll facts: {[f.fact for f in facts]}"
         )
@@ -841,6 +816,7 @@ I've learned so much from it.
 # =============================================================================
 # FACT CLASSIFICATION TESTS
 # =============================================================================
+
 
 class TestFactClassification:
     """Tests that facts are correctly classified as agent vs world."""
@@ -885,8 +861,6 @@ Jamie: Congratulations! I'd love to read it.
         # The transcript is dense with AI-research content from Marcus.  Extraction
         # must surface that subject matter — paraphrases like "alignment work" for
         # "AI safety research" should count, so the judge handles the assertion.
-        from tests.llm_judge import assert_meets_criteria
-
         await assert_meets_criteria(
             response=all_facts_text,
             criteria=(
@@ -971,8 +945,6 @@ Jamie: [teasing] We'll see who's right, my Niners pick is solid.
         # The judge evaluates speaker attribution rather than substring-matching team
         # names — paraphrases like "the home team" or "San Francisco's squad" should
         # still satisfy the prediction-content criterion.
-        from tests.llm_judge import assert_meets_criteria
-
         await assert_meets_criteria(
             response=all_facts_text,
             criteria=(
@@ -1059,8 +1031,6 @@ so the algorithm learns to box out. See you next week!
                 # Judge: substantive content must be extracted regardless of paraphrasing.
                 # "Alignment work" or "machine-learning transparency" satisfy the criterion
                 # the substring check used to enforce as "interpretability/ai/safety".
-                from tests.llm_judge import assert_meets_criteria
-
                 await assert_meets_criteria(
                     response=all_facts_text,
                     criteria=(
@@ -1086,5 +1056,3 @@ so the algorithm learns to box out. See you next week!
                     continue
                 else:
                     raise e
-
-
