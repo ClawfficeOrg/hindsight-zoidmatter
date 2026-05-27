@@ -489,7 +489,7 @@ DEFAULT_LLM_PROVIDER = "openai"
 PROVIDER_DEFAULT_MODELS = {
     "openai": "gpt-4o-mini",
     "anthropic": "claude-haiku-4-5",
-    "gemini": "gemini-2.5-flash",
+    "gemini": "gemini-3.5-flash",
     "groq": "openai/gpt-oss-120b",
     "minimax": "MiniMax-M2.7",
     "deepseek": "deepseek-v4-flash",
@@ -499,7 +499,7 @@ PROVIDER_DEFAULT_MODELS = {
     "ollama-cloud": "gemma3:12b",
     "llamacpp": "gemma-4-e2b-it",
     "lmstudio": "local-model",
-    "vertexai": "google/gemini-2.5-flash-lite",
+    "vertexai": "google/gemini-3.1-flash-lite",
     "openai-codex": "gpt-5.4-mini",
     "claude-code": "claude-sonnet-4-5-20250929",
     "mock": "mock-model",
