@@ -146,6 +146,7 @@ async def test_entity_expansion_timeout_fallback(memory, request_context):
 
 
 @pytest.mark.asyncio
+@pytest.mark.timeout(600)
 async def test_per_entity_limit_caps_expansion(memory, request_context):
     """
     With graph_per_entity_limit set to a small value, entity expansion should
