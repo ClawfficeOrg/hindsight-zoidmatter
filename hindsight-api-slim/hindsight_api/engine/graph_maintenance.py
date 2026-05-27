@@ -1,53 +1,34 @@
-"""Async graph maintenance after document/unit mutations.
+"""Async graph maintenance after document/unit deletes.
 
-This module is the dispatcher for post-mutation graph cleanup. Today it
-handles a single ``kind`` of work — ``relink_unit`` — but the queue and
-worker are designed so other cleanups (orphan entity pruning, stale
-cooccurrence removal, etc.) can ride on the same surface.
+Three reconciliation passes run together on every worker invocation:
 
-## The ``relink_unit`` kind
+1. **Relink top-up.** Drain ``graph_maintenance_queue`` (units whose
+   outgoing temporal/semantic links lost a neighbour to a delete). For
+   each, count current outgoing links per type; if below cap, run the
+   same probes retain uses (:func:`fetch_temporal_neighbors`,
+   :func:`compute_semantic_links_ann`) and insert the missing links.
+   ``bulk_insert_links`` has ``ON CONFLICT DO NOTHING`` on the uniqueness
+   key, so we can re-probe freely and the DB de-dupes.
 
-When a memory_unit is deleted, the FK cascade removes its outgoing/incoming
-``memory_links`` rows. Other units that had this unit in their top-K
-``temporal``/``semantic`` neighbours therefore lose links and stay
-permanently under-capped — the original retain path only generates links
-for newly-inserted units, never re-evaluates surviving ones.
+2. **Orphan entity prune.** Delete ``entities`` rows in the bank that no
+   longer have any ``unit_entities`` references. FK ON DELETE CASCADE on
+   ``entity_cooccurrences`` then removes any cooccurrence row pointing
+   at the pruned entities.
 
-This module fixes that staleness reactively:
+3. **Stale cooccurrence prune.** Defensive sweep for cooccurrence rows
+   where both endpoints still exist but no current memory_unit references
+   both of them — the cooccurrence was real at the time it was recorded,
+   but every unit that witnessed it has since been deleted.
 
-* :func:`enqueue_relink_victims` is called inside the delete transaction
-  by every code path that removes memory_units. It captures the
-  ``from_unit_id`` of every outgoing temporal/semantic link that targeted
-  a deleted unit and writes those IDs into ``graph_maintenance_queue``
-  with ``kind='relink_unit'``. The capture happens *before* the cascade
-  fires so the rows still exist.
-* :func:`run_graph_maintenance_job` drains the queue in batches, groups
-  rows by ``kind``, and dispatches each group to the matching handler.
-  For ``relink_unit`` the handler runs the same probes used at retain
-  time (:func:`fetch_temporal_neighbors`, :func:`compute_semantic_links_ann`)
-  to find replacement neighbours and inserts top-up links.
-  ``bulk_insert_links`` has ``ON CONFLICT DO NOTHING`` on the uniqueness
-  key, so we can re-probe freely and the DB de-dupes.
+All three passes run on every invocation. The queue is the only source
+of work for pass 1; passes 2 and 3 are bank-wide sweeps backed by indexes
+on ``entities(bank_id)`` and ``unit_entities(entity_id)``, so they're
+cheap when there's nothing to do.
 
 The worker dedupes on bank: a second job for the same bank is dropped
 while one is pending. Once processing starts, a new job becomes the
-*next* pending slot — so victims enqueued during processing get picked
-up by the follow-up run.
-
-## Adding a new kind
-
-1. Define a constant string for the kind (``KIND_<NAME>``) and use it as
-   the ``kind`` value when enqueueing.
-2. Write an ``enqueue_*_targets`` helper that captures IDs inside the
-   triggering transaction and calls ``ops.enqueue_graph_maintenance``.
-3. Implement an ``async def _handle_<kind>(conn, bank_id, target_ids, ...)``
-   batch handler that returns a ``KindResult`` (work done, side-effects).
-4. Add an ``elif kind == KIND_<NAME>`` branch to ``_dispatch_batch`` below.
-
-Each kind's handler operates on a list of target IDs of the same kind,
-already filtered for existence where appropriate, and shares the same
-write transaction as the queue delete so a crash mid-batch loses at most
-the current batch.
+*next* pending slot — so work enqueued during processing gets picked up
+by the follow-up run.
 """
 
 from __future__ import annotations
@@ -55,7 +36,6 @@ from __future__ import annotations
 import logging
 import time
 import uuid as uuid_module
-from collections import defaultdict
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -74,33 +54,34 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Kind identifiers. Values are stored verbatim in graph_maintenance_queue.kind
-# and surfaced in logs; renaming them requires a data migration.
-KIND_RELINK_UNIT = "relink_unit"
-
 # Mirrors the ``top_k`` default in ``compute_semantic_links_ann`` at retain
 # time. If you change one, change the other — otherwise victims would either
 # never reach the cap (probe returns less than the cap) or stay perpetually
 # under it (cap is higher than retain creates).
 MAX_SEMANTIC_LINKS_PER_UNIT = 50
 
-# Worker fetches this many rows per loop iteration. Bounds per-iteration
-# probe/insert latency so a 10k-row job doesn't hold a worker slot for
-# minutes. Chosen so the typical iteration runs in well under 1s.
+# Worker fetches this many rows per relink-loop iteration. Bounds
+# per-iteration probe/insert latency so a 10k-row backlog doesn't hold a
+# worker slot for minutes. Chosen so the typical iteration runs in well
+# under 1s.
 _DRAIN_BATCH_SIZE = 50
 
 
 @dataclass
 class JobResult:
-    """Aggregate counters returned to the worker dispatcher."""
+    """Counters surfaced to the worker dispatcher and operation result."""
 
-    targets_processed: int = 0
+    relink_units_processed: int = 0
     relink_links_added: int = 0
+    orphan_entities_pruned: int = 0
+    stale_cooccurrences_pruned: int = 0
 
     def as_dict(self) -> dict[str, int]:
         return {
-            "targets_processed": self.targets_processed,
+            "relink_units_processed": self.relink_units_processed,
             "relink_links_added": self.relink_links_added,
+            "orphan_entities_pruned": self.orphan_entities_pruned,
+            "stale_cooccurrences_pruned": self.stale_cooccurrences_pruned,
         }
 
 
@@ -111,7 +92,7 @@ async def enqueue_relink_victims(
     ops: Any,
 ) -> int:
     """Enqueue surviving units whose outgoing temporal/semantic links pointed at
-    ``deleted_unit_ids`` for later link top-up (``kind='relink_unit'``).
+    ``deleted_unit_ids`` for later link top-up.
 
     Must run inside the same transaction that deletes the units, *before* the
     cascade fires — once the rows are gone, the join that finds the victims
@@ -159,12 +140,11 @@ async def enqueue_relink_victims(
         conn,
         fq_table("graph_maintenance_queue"),
         bank_id,
-        KIND_RELINK_UNIT,
         victim_ids,
     )
 
     logger.debug(
-        f"[GRAPH_MAINT] Enqueued {len(victim_ids)} {KIND_RELINK_UNIT} targets in "
+        f"[GRAPH_MAINT] Enqueued {len(victim_ids)} relink victims in "
         f"bank={bank_id} (deleted {len(deleted_unit_ids)} units)"
     )
     return len(victim_ids)
@@ -176,88 +156,83 @@ async def run_graph_maintenance_job(
     request_context: RequestContext,
     operation_id: str | None = None,
 ) -> dict[str, int]:
-    """Drain ``graph_maintenance_queue`` for ``bank_id`` until empty.
-
-    Each iteration claims up to ``_DRAIN_BATCH_SIZE`` rows, groups them by
-    ``kind``, and dispatches each group to the matching handler. The batch
-    + queue delete commit together; a crash mid-job loses at most the
-    current batch (already-committed work persists).
+    """Run all maintenance passes for ``bank_id`` until the relink queue is
+    drained, then sweep entities and cooccurrences once.
 
     Returns:
-        Dict of per-counter values from :class:`JobResult`. Always contains
-        ``targets_processed`` (claimed from queue) and the per-kind
-        counters (e.g. ``relink_links_added``).
+        Per-pass counters from :class:`JobResult`.
     """
     del request_context  # accepted for symmetry with other run_*_job helpers
     backend = await memory_engine._get_backend()
     ops = backend.ops
 
     result = JobResult()
-    iterations = 0
     job_start = time.time()
 
-    # Per-iteration loop: claim → dispatch by kind → commit. Continues until
-    # the queue for this bank is drained. We rely on submit-time dedup to
-    # keep at most one job per bank running, so no need for SKIP LOCKED.
+    # --- Pass 1: relink ---
+    # Per-iteration loop: claim → top up → commit. We rely on submit-time
+    # dedup to keep at most one job per bank running, so no need for
+    # SKIP LOCKED.
+    iterations = 0
     while True:
         from .memory_engine import acquire_with_retry
 
         async with acquire_with_retry(backend) as conn:
             async with conn.transaction():
-                batch = await ops.claim_graph_maintenance_batch(
+                unit_ids = await ops.claim_graph_maintenance_batch(
                     conn,
                     fq_table("graph_maintenance_queue"),
                     bank_id,
                     _DRAIN_BATCH_SIZE,
                 )
-                if not batch:
+                if not unit_ids:
                     break
 
-                await _dispatch_batch(conn, bank_id, batch, ops, backend, result)
+                result.relink_links_added += await _relink_batch(conn, bank_id, unit_ids, ops, backend)
 
-        result.targets_processed += len(batch)
+        result.relink_units_processed += len(unit_ids)
         iterations += 1
 
         if iterations > 10000:
-            # Defensive guard against runaway loops — at 50 rows/iter that's
+            # Defensive guard against runaway loops — at 50 units/iter that's
             # 500k targets, far beyond any realistic single-bank backlog.
             logger.error(
-                f"[GRAPH_MAINT] bank={bank_id} hit iteration cap ({iterations}); aborting drain ({result.as_dict()})"
+                f"[GRAPH_MAINT] bank={bank_id} hit iteration cap ({iterations}); aborting relink ({result.as_dict()})"
             )
             break
 
+    # --- Pass 2 & 3: entity / cooccurrence sweeps ---
+    # Bank-wide single-statement deletes. Cheap when there's nothing to do.
+    from .memory_engine import acquire_with_retry
+
+    async with acquire_with_retry(backend) as conn:
+        async with conn.transaction():
+            result.orphan_entities_pruned = await ops.prune_orphan_entities(
+                conn,
+                fq_table("entities"),
+                fq_table("unit_entities"),
+                bank_id,
+            )
+            # The orphan prune above cascades cooccurrences via FK. The
+            # explicit cooccurrence pass below catches the *stale-count*
+            # case: both entities still exist but no current unit witnesses
+            # them together.
+            result.stale_cooccurrences_pruned = await ops.prune_stale_cooccurrences(
+                conn,
+                fq_table("entity_cooccurrences"),
+                fq_table("unit_entities"),
+                fq_table("entities"),
+                bank_id,
+            )
+
     elapsed = time.time() - job_start
     logger.info(
-        f"[GRAPH_MAINT] bank={bank_id} done: {result.as_dict()}, "
-        f"iterations={iterations}, elapsed={elapsed:.2f}s, operation_id={operation_id}"
+        f"[GRAPH_MAINT] bank={bank_id} done: {result.as_dict()}, elapsed={elapsed:.2f}s, operation_id={operation_id}"
     )
     return result.as_dict()
 
 
-async def _dispatch_batch(
-    conn: DatabaseConnection,
-    bank_id: str,
-    batch: list[tuple[str, str]],
-    ops: Any,
-    backend: Any,
-    result: JobResult,
-) -> None:
-    """Group a claimed batch by kind and call the matching handler."""
-    by_kind: dict[str, list[str]] = defaultdict(list)
-    for kind, target_id in batch:
-        by_kind[kind].append(target_id)
-
-    for kind, target_ids in by_kind.items():
-        if kind == KIND_RELINK_UNIT:
-            result.relink_links_added += await _handle_relink_unit(conn, bank_id, target_ids, ops, backend)
-        else:
-            # Unknown kind — log and skip. The row has already been deleted
-            # from the queue by claim_graph_maintenance_batch, so we don't
-            # spin on it forever; the cost is just a missed cleanup.
-            logger.warning(f"[GRAPH_MAINT] bank={bank_id}: skipping {len(target_ids)} rows of unknown kind={kind!r}")
-
-
-async def _handle_relink_unit(
+async def _relink_batch(
     conn: DatabaseConnection,
     bank_id: str,
     victim_ids: list[str],

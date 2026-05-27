@@ -399,11 +399,10 @@ class DataAccessOps(ABC):
         conn: DatabaseConnection,
         table: str,
         bank_id: str,
-        kind: str,
-        target_ids: list,
+        unit_ids: list,
     ) -> None:
-        """Insert (kind, target_id) rows into graph_maintenance_queue,
-        deduplicating on the (bank_id, kind, target_id) primary key.
+        """Insert unit_ids into graph_maintenance_queue, deduplicating on the
+        (bank_id, unit_id) primary key.
 
         Called inside the triggering transaction so enqueue is atomic with
         the mutation that caused it. Order is unspecified.
@@ -417,12 +416,46 @@ class DataAccessOps(ABC):
         table: str,
         bank_id: str,
         limit: int,
-    ) -> list[tuple[str, str]]:
+    ) -> list[str]:
         """Atomically claim a batch of rows from graph_maintenance_queue and
         remove them from the table.
 
-        Returns a list of ``(kind, target_id)`` string tuples. Empty list
-        when the queue for ``bank_id`` is drained.
+        Returns the list of ``unit_id`` strings. Empty list when the queue
+        for ``bank_id`` is drained.
+        """
+        ...
+
+    @abstractmethod
+    async def prune_orphan_entities(
+        self,
+        conn: DatabaseConnection,
+        entities_table: str,
+        ue_table: str,
+        bank_id: str,
+    ) -> int:
+        """Delete entities in ``bank_id`` that no longer have any unit_entities
+        rows referencing them. Returns the number of rows deleted.
+
+        FK ON DELETE CASCADE on entity_cooccurrences then removes any
+        cooccurrence row pointing at the pruned entities.
+        """
+        ...
+
+    @abstractmethod
+    async def prune_stale_cooccurrences(
+        self,
+        conn: DatabaseConnection,
+        ec_table: str,
+        ue_table: str,
+        entities_table: str,
+        bank_id: str,
+    ) -> int:
+        """Delete entity_cooccurrences rows in ``bank_id`` where the two
+        entities still exist but no current unit references both of them.
+
+        These are stale-count rows: cooccurrence was real at the time it was
+        recorded, but every memory_unit that witnessed both entities has
+        since been deleted. Returns the number of rows deleted.
         """
         ...
 

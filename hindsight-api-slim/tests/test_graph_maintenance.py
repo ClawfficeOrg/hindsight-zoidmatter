@@ -1,8 +1,9 @@
 """Tests for async graph maintenance after delete.
 
-These tests bypass the LLM-backed retain pipeline by inserting memory_units
-and memory_links directly. That gives precise control over the link
-topology so we can assert exact counts after a delete + drain.
+These tests bypass the LLM-backed retain pipeline by inserting memory_units,
+memory_links, entities, and unit_entities directly. That gives precise
+control over the graph state so we can assert exact behaviour after a
+delete + drain.
 
 The fixture's task backend is ``SyncTaskBackend`` (see conftest), so
 ``submit_async_graph_maintenance`` runs the worker inline — no polling needed.
@@ -17,7 +18,6 @@ import pytest
 
 from hindsight_api import RequestContext
 from hindsight_api.engine.graph_maintenance import (
-    KIND_RELINK_UNIT,
     MAX_SEMANTIC_LINKS_PER_UNIT,
     MAX_TEMPORAL_LINKS_PER_UNIT,
     enqueue_relink_victims,
@@ -74,6 +74,41 @@ async def _insert_link(
     )
 
 
+async def _insert_entity(conn, bank_id: str, name: str) -> uuid.UUID:
+    """Insert an entity row directly. Returns its UUID."""
+    entity_id = uuid.uuid4()
+    await conn.execute(
+        """
+        INSERT INTO entities (id, bank_id, canonical_name, first_seen, last_seen, mention_count)
+        VALUES ($1, $2, $3, NOW(), NOW(), 1)
+        """,
+        entity_id,
+        bank_id,
+        name,
+    )
+    return entity_id
+
+
+async def _link_unit_entity(conn, unit_id: uuid.UUID, entity_id: uuid.UUID) -> None:
+    await conn.execute(
+        "INSERT INTO unit_entities (unit_id, entity_id) VALUES ($1, $2)",
+        unit_id,
+        entity_id,
+    )
+
+
+async def _insert_cooccurrence(conn, entity_a: uuid.UUID, entity_b: uuid.UUID, count: int = 1) -> None:
+    await conn.execute(
+        """
+        INSERT INTO entity_cooccurrences (entity_id_1, entity_id_2, cooccurrence_count, last_cooccurred)
+        VALUES ($1, $2, $3, NOW())
+        """,
+        entity_a,
+        entity_b,
+        count,
+    )
+
+
 async def _insert_document(conn, bank_id: str, doc_id: str) -> None:
     await conn.execute(
         """
@@ -91,16 +126,12 @@ async def _attach_unit_to_doc(conn, unit_id: uuid.UUID, doc_id: str) -> None:
     await conn.execute("UPDATE memory_units SET document_id = $1 WHERE id = $2", doc_id, unit_id)
 
 
-async def _queue_rows(conn, bank_id: str) -> list[tuple[str, str]]:
+async def _queue_unit_ids(conn, bank_id: str) -> list[str]:
     rows = await conn.fetch(
-        """
-        SELECT kind, target_id FROM graph_maintenance_queue
-        WHERE bank_id = $1
-        ORDER BY kind, target_id
-        """,
+        "SELECT unit_id FROM graph_maintenance_queue WHERE bank_id = $1 ORDER BY unit_id",
         bank_id,
     )
-    return [(r["kind"], str(r["target_id"])) for r in rows]
+    return [str(r["unit_id"]) for r in rows]
 
 
 # ---------------------------------------------------------------------------
@@ -128,8 +159,7 @@ class TestEnqueueRelinkVictims:
                 count = await enqueue_relink_victims(conn, bank_id, [str(doomed)], ops=backend.ops)
 
             assert count == 1
-            queued = await _queue_rows(conn, bank_id)
-            assert queued == [(KIND_RELINK_UNIT, str(survivor))]
+            assert await _queue_unit_ids(conn, bank_id) == [str(survivor)]
 
     @pytest.mark.asyncio
     async def test_excludes_deleted_units_themselves(
@@ -152,8 +182,7 @@ class TestEnqueueRelinkVictims:
                 count = await enqueue_relink_victims(conn, bank_id, [str(a), str(b)], ops=backend.ops)
 
             assert count == 0
-            queued = await _queue_rows(conn, bank_id)
-            assert queued == []
+            assert await _queue_unit_ids(conn, bank_id) == []
 
     @pytest.mark.asyncio
     async def test_skips_entity_links(self, memory: MemoryEngine, request_context: RequestContext):
@@ -194,8 +223,7 @@ class TestEnqueueRelinkVictims:
                 await enqueue_relink_victims(conn, bank_id, [str(doomed1)], ops=backend.ops)
                 await enqueue_relink_victims(conn, bank_id, [str(doomed2)], ops=backend.ops)
 
-            queued = await _queue_rows(conn, bank_id)
-            assert queued == [(KIND_RELINK_UNIT, str(survivor))]
+            assert await _queue_unit_ids(conn, bank_id) == [str(survivor)]
 
 
 # ---------------------------------------------------------------------------
@@ -227,16 +255,15 @@ class TestDeleteDocumentEnqueue:
             # The synchronous task backend means the worker already drained the
             # queue before delete_document returned — assert end-state, not the
             # intermediate enqueue. Queue should be empty.
-            queued = await _queue_rows(conn, bank_id)
-            assert queued == []
+            assert await _queue_unit_ids(conn, bank_id) == []
 
 
 # ---------------------------------------------------------------------------
-# run_graph_maintenance_job
+# Relink pass (Pass 1)
 # ---------------------------------------------------------------------------
 
 
-class TestWorker:
+class TestRelinkPass:
     @pytest.mark.asyncio
     async def test_drains_empty_queue_cleanly(
         self, memory: MemoryEngine, request_context: RequestContext
@@ -245,65 +272,43 @@ class TestWorker:
         await _ensure_bank(memory, bank_id, request_context)
 
         result = await run_graph_maintenance_job(memory, bank_id, request_context)
-        assert result == {"targets_processed": 0, "relink_links_added": 0}
+        assert result == {
+            "relink_units_processed": 0,
+            "relink_links_added": 0,
+            "orphan_entities_pruned": 0,
+            "stale_cooccurrences_pruned": 0,
+        }
 
     @pytest.mark.asyncio
-    async def test_skips_missing_target_silently(
+    async def test_skips_missing_unit_silently(
         self, memory: MemoryEngine, request_context: RequestContext
     ):
-        """Target deleted between enqueue and drain: worker dequeues and no-ops."""
+        """Unit deleted between enqueue and drain: worker dequeues and no-ops."""
         bank_id = f"test-gm-miss-{uuid.uuid4().hex[:8]}"
         await _ensure_bank(memory, bank_id, request_context)
 
         pool = await memory._get_pool()
         async with pool.acquire() as conn:
-            # Enqueue a relink_unit target that doesn't exist in memory_units.
+            # Enqueue a unit_id that doesn't exist in memory_units.
             await conn.execute(
-                "INSERT INTO graph_maintenance_queue (bank_id, kind, target_id) VALUES ($1, $2, $3)",
+                "INSERT INTO graph_maintenance_queue (bank_id, unit_id) VALUES ($1, $2)",
                 bank_id,
-                KIND_RELINK_UNIT,
                 uuid.uuid4(),
             )
 
         result = await run_graph_maintenance_job(memory, bank_id, request_context)
-        assert result["targets_processed"] == 1
+        assert result["relink_units_processed"] == 1
         assert result["relink_links_added"] == 0
 
         async with pool.acquire() as conn:
-            assert await _queue_rows(conn, bank_id) == []
-
-    @pytest.mark.asyncio
-    async def test_skips_unknown_kind_without_failing(
-        self, memory: MemoryEngine, request_context: RequestContext
-    ):
-        """Unknown kind values land in the queue without crashing the worker —
-        they get dequeued and logged. Guards against forward-compat issues if a
-        future migration enqueues a kind this build doesn't know about."""
-        bank_id = f"test-gm-unkk-{uuid.uuid4().hex[:8]}"
-        await _ensure_bank(memory, bank_id, request_context)
-
-        pool = await memory._get_pool()
-        async with pool.acquire() as conn:
-            await conn.execute(
-                "INSERT INTO graph_maintenance_queue (bank_id, kind, target_id) VALUES ($1, $2, $3)",
-                bank_id,
-                "made_up_future_kind",
-                uuid.uuid4(),
-            )
-
-        result = await run_graph_maintenance_job(memory, bank_id, request_context)
-        assert result["targets_processed"] == 1
-        assert result["relink_links_added"] == 0
-
-        async with pool.acquire() as conn:
-            assert await _queue_rows(conn, bank_id) == []
+            assert await _queue_unit_ids(conn, bank_id) == []
 
     @pytest.mark.asyncio
     async def test_tops_up_temporal_when_under_cap(
         self, memory: MemoryEngine, request_context: RequestContext
     ):
-        """The headline behaviour: a victim under the temporal cap gets new
-        outgoing links to neighbours that were never linked at retain time."""
+        """A victim under the temporal cap gets new outgoing links to neighbours
+        that were never linked at retain time."""
         bank_id = f"test-gm-topup-{uuid.uuid4().hex[:8]}"
         await _ensure_bank(memory, bank_id, request_context)
 
@@ -319,28 +324,25 @@ class TestWorker:
                 await _insert_unit(conn, bank_id, f"linked-{i}", event_date=base + timedelta(minutes=i + 1))
                 for i in range(2)
             ]
-            unlinked = [
-                await _insert_unit(conn, bank_id, f"unlinked-{i}", event_date=base + timedelta(minutes=i + 30))
-                for i in range(5)
-            ]
+            for _ in range(5):
+                await _insert_unit(conn, bank_id, "unlinked", event_date=base + timedelta(minutes=30))
 
             for nbr in already_linked:
                 await _insert_link(conn, bank_id, victim, nbr, "temporal")
 
             await conn.execute(
-                "INSERT INTO graph_maintenance_queue (bank_id, kind, target_id) VALUES ($1, $2, $3)",
+                "INSERT INTO graph_maintenance_queue (bank_id, unit_id) VALUES ($1, $2)",
                 bank_id,
-                KIND_RELINK_UNIT,
                 victim,
             )
 
         result = await run_graph_maintenance_job(memory, bank_id, request_context)
-        assert result["targets_processed"] == 1
+        assert result["relink_units_processed"] == 1
         # We probed for up to MAX_TEMPORAL_LINKS_PER_UNIT neighbours; bulk insert
         # is ON CONFLICT DO NOTHING, so the already-linked 2 are silently
         # skipped at insert time. The probe still returned them, so
-        # relink_links_added counts what we attempted to insert (probe rows),
-        # not what actually landed. Verify the end-state via the DB instead.
+        # relink_links_added counts what we attempted to insert, not what
+        # actually landed. Verify the end-state via the DB instead.
         assert result["relink_links_added"] >= 5
 
         async with pool.acquire() as conn:
@@ -355,8 +357,7 @@ class TestWorker:
             # 2 originals + 5 new = 7 distinct outgoing temporal links.
             assert outgoing == 7
 
-            # Queue must be drained.
-            assert await _queue_rows(conn, bank_id) == []
+            assert await _queue_unit_ids(conn, bank_id) == []
 
     @pytest.mark.asyncio
     async def test_no_topup_when_victim_at_cap(
@@ -382,14 +383,13 @@ class TestWorker:
                 await _insert_unit(conn, bank_id, f"x-{i}", event_date=base + timedelta(minutes=i + 100))
 
             await conn.execute(
-                "INSERT INTO graph_maintenance_queue (bank_id, kind, target_id) VALUES ($1, $2, $3)",
+                "INSERT INTO graph_maintenance_queue (bank_id, unit_id) VALUES ($1, $2)",
                 bank_id,
-                KIND_RELINK_UNIT,
                 victim,
             )
 
         result = await run_graph_maintenance_job(memory, bank_id, request_context)
-        assert result["targets_processed"] == 1
+        assert result["relink_units_processed"] == 1
 
         async with pool.acquire() as conn:
             outgoing = await conn.fetchval(
@@ -400,6 +400,142 @@ class TestWorker:
                 victim,
             )
             assert outgoing == MAX_TEMPORAL_LINKS_PER_UNIT
+
+
+# ---------------------------------------------------------------------------
+# Orphan entity prune (Pass 2)
+# ---------------------------------------------------------------------------
+
+
+class TestOrphanEntityPrune:
+    @pytest.mark.asyncio
+    async def test_prunes_entities_with_no_unit_references(
+        self, memory: MemoryEngine, request_context: RequestContext
+    ):
+        """An entity with zero unit_entities rows is an orphan and should be
+        deleted by the sweep."""
+        bank_id = f"test-gm-orphan-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+
+        pool = await memory._get_pool()
+        async with pool.acquire() as conn:
+            referenced = await _insert_entity(conn, bank_id, "referenced")
+            orphan_a = await _insert_entity(conn, bank_id, "orphan_a")
+            orphan_b = await _insert_entity(conn, bank_id, "orphan_b")
+
+            unit = await _insert_unit(conn, bank_id, "with-entity")
+            await _link_unit_entity(conn, unit, referenced)
+
+        result = await run_graph_maintenance_job(memory, bank_id, request_context)
+        assert result["orphan_entities_pruned"] == 2
+
+        async with pool.acquire() as conn:
+            survivors = await conn.fetch(
+                "SELECT id FROM entities WHERE bank_id = $1 ORDER BY id", bank_id
+            )
+            survivor_ids = {str(r["id"]) for r in survivors}
+            assert survivor_ids == {str(referenced)}
+            # Confirm orphans are gone.
+            for orphan in (orphan_a, orphan_b):
+                assert orphan not in survivor_ids
+
+    @pytest.mark.asyncio
+    async def test_does_not_touch_other_banks(
+        self, memory: MemoryEngine, request_context: RequestContext
+    ):
+        """The sweep is scoped by bank — orphan entities in OTHER banks
+        must not be touched."""
+        bank_a = f"test-gm-scopea-{uuid.uuid4().hex[:8]}"
+        bank_b = f"test-gm-scopeb-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_a, request_context)
+        await _ensure_bank(memory, bank_b, request_context)
+
+        pool = await memory._get_pool()
+        async with pool.acquire() as conn:
+            orphan_in_a = await _insert_entity(conn, bank_a, "orphan_a")
+            orphan_in_b = await _insert_entity(conn, bank_b, "orphan_b")
+
+        await run_graph_maintenance_job(memory, bank_a, request_context)
+
+        async with pool.acquire() as conn:
+            # b's orphan must still exist — the sweep was scoped to a.
+            still_in_b = await conn.fetchval("SELECT 1 FROM entities WHERE id = $1", orphan_in_b)
+            assert still_in_b == 1
+            # a's orphan is gone.
+            still_in_a = await conn.fetchval("SELECT 1 FROM entities WHERE id = $1", orphan_in_a)
+            assert still_in_a is None
+
+
+# ---------------------------------------------------------------------------
+# Stale cooccurrence prune (Pass 3)
+# ---------------------------------------------------------------------------
+
+
+class TestStaleCooccurrencePrune:
+    @pytest.mark.asyncio
+    async def test_prunes_cooccurrence_with_no_shared_unit(
+        self, memory: MemoryEngine, request_context: RequestContext
+    ):
+        """Both entities still exist but no unit references both of them — the
+        cooccurrence row is stale and should be pruned."""
+        bank_id = f"test-gm-cocc-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+
+        pool = await memory._get_pool()
+        async with pool.acquire() as conn:
+            ent_a = await _insert_entity(conn, bank_id, "alice")
+            ent_b = await _insert_entity(conn, bank_id, "bob")
+            # Cooccurrence row records that A and B were observed together.
+            await _insert_cooccurrence(conn, ent_a, ent_b, count=5)
+            # Both entities still have references — but to DIFFERENT units, so
+            # no current unit witnesses both A and B together.
+            unit_a = await _insert_unit(conn, bank_id, "with_a")
+            unit_b = await _insert_unit(conn, bank_id, "with_b")
+            await _link_unit_entity(conn, unit_a, ent_a)
+            await _link_unit_entity(conn, unit_b, ent_b)
+
+        result = await run_graph_maintenance_job(memory, bank_id, request_context)
+        assert result["stale_cooccurrences_pruned"] == 1
+        # Both entities still exist — they weren't orphans.
+        assert result["orphan_entities_pruned"] == 0
+
+        async with pool.acquire() as conn:
+            remaining = await conn.fetchval(
+                "SELECT COUNT(*) FROM entity_cooccurrences WHERE entity_id_1 = $1 AND entity_id_2 = $2",
+                ent_a,
+                ent_b,
+            )
+            assert remaining == 0
+
+    @pytest.mark.asyncio
+    async def test_keeps_cooccurrence_with_shared_unit(
+        self, memory: MemoryEngine, request_context: RequestContext
+    ):
+        """If at least one unit still references both entities, the cooccurrence
+        row stays."""
+        bank_id = f"test-gm-keep-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+
+        pool = await memory._get_pool()
+        async with pool.acquire() as conn:
+            ent_a = await _insert_entity(conn, bank_id, "alice")
+            ent_b = await _insert_entity(conn, bank_id, "bob")
+            await _insert_cooccurrence(conn, ent_a, ent_b, count=5)
+            # A unit references both — cooccurrence is still grounded.
+            unit = await _insert_unit(conn, bank_id, "alice-and-bob")
+            await _link_unit_entity(conn, unit, ent_a)
+            await _link_unit_entity(conn, unit, ent_b)
+
+        result = await run_graph_maintenance_job(memory, bank_id, request_context)
+        assert result["stale_cooccurrences_pruned"] == 0
+
+        async with pool.acquire() as conn:
+            still_there = await conn.fetchval(
+                "SELECT cooccurrence_count FROM entity_cooccurrences WHERE entity_id_1 = $1 AND entity_id_2 = $2",
+                ent_a,
+                ent_b,
+            )
+            assert still_there == 5
 
 
 # ---------------------------------------------------------------------------

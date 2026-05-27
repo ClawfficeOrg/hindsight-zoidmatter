@@ -1,14 +1,12 @@
 """Add graph_maintenance_queue table
 
-Generic queue for post-mutation graph maintenance work. The first ``kind``
-of work — ``relink_unit`` — holds the unit IDs that lost an outgoing
-temporal/semantic link when a neighbour memory_unit was deleted; an async
-worker probes for replacement neighbours and restores the link counts.
+Queue of memory_units whose outgoing temporal/semantic links lost a
+neighbour to a delete. Drained by the async graph_maintenance worker,
+which tops the unit's links back up using the same probes retain runs.
 
-The (bank_id, kind, target_id) shape is deliberately generic so other
-post-delete cleanup tasks (orphan entity pruning, stale cooccurrence
-removal, etc.) can ride on the same queue and worker dispatch instead of
-each spawning its own task type.
+The queue only targets the link-recompute pass. The worker also runs
+bank-wide sweeps (orphan-entity prune, stale-cooccurrence prune) on each
+invocation; those don't need per-target queueing.
 
 Revision ID: b5a4c3e2f1d8
 Revises: e9b2c7d1f3a4
@@ -35,19 +33,17 @@ def _pg_schema_prefix() -> str:
 def _pg_upgrade() -> None:
     schema = _pg_schema_prefix()
     # Composite PK gives us natural ON CONFLICT DO NOTHING dedup when the same
-    # (kind, target) is enqueued from overlapping mutations. No FK to
-    # memory_units/entities: if the target row is deleted between enqueue and
-    # drain, the worker observes it's gone and skips — a cascade would erase
-    # the work order, but that work has already been satisfied (no surviving
-    # row to maintain).
+    # unit is enqueued from overlapping deletes. No FK to memory_units: if the
+    # unit is deleted between enqueue and drain, the worker observes it's gone
+    # and skips — a cascade would erase the work order, but that work has
+    # already been satisfied (no surviving row to maintain).
     op.execute(
         f"""
         CREATE TABLE IF NOT EXISTS {schema}graph_maintenance_queue (
             bank_id     TEXT NOT NULL,
-            kind        TEXT NOT NULL,
-            target_id   UUID NOT NULL,
+            unit_id     UUID NOT NULL,
             enqueued_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-            PRIMARY KEY (bank_id, kind, target_id)
+            PRIMARY KEY (bank_id, unit_id)
         )
         """
     )
@@ -86,10 +82,9 @@ def _oracle_upgrade() -> None:
         """
         CREATE TABLE graph_maintenance_queue (
             bank_id     VARCHAR2(256) NOT NULL,
-            kind        VARCHAR2(64)  NOT NULL,
-            target_id   RAW(16)       NOT NULL,
+            unit_id     RAW(16)       NOT NULL,
             enqueued_at TIMESTAMP WITH TIME ZONE DEFAULT SYSTIMESTAMP NOT NULL,
-            CONSTRAINT pk_graph_maintenance_queue PRIMARY KEY (bank_id, kind, target_id)
+            CONSTRAINT pk_graph_maintenance_queue PRIMARY KEY (bank_id, unit_id)
         )
         """
     )

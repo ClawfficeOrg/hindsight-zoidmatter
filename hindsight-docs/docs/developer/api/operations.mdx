@@ -82,17 +82,15 @@ Triggered either manually via `POST /v1/default/banks/{bank_id}/mental-models/{i
 
 ### `graph_maintenance`
 
-Reconciles derived state that becomes stale after a mutation. Bank-deduped at submit time, so concurrent triggers against the same bank coalesce into one drain.
+Reconciles derived state that goes stale after a delete. Every invocation runs three passes:
 
-The queue is keyed by `(bank_id, kind, target_id)` and dispatched by `kind`. Today the only kind is `relink_unit`; future cleanups (orphan entity pruning, stale cooccurrences) will ride on the same surface without a new task type.
+1. **Link top-up.** Drains the `graph_maintenance_queue` (units whose outgoing temporal/semantic links lost a neighbour). For each, if the unit is under its cap (20 temporal, 50 semantic), Hindsight re-runs the same probes retain uses and inserts the missing links. Without this, the retain pipeline's top-K capping would leave surviving units permanently under-capped after every delete — degrading graph-expansion recall.
+2. **Orphan entity prune.** Deletes entities in the bank with no remaining `unit_entities` references. FK `ON DELETE CASCADE` on `entity_cooccurrences` then removes any cooccurrence row pointing at a pruned entity.
+3. **Stale cooccurrence prune.** Cleans up `entity_cooccurrences` rows where both endpoints still exist but no current memory_unit references both of them — the cooccurrence was real when it was recorded, but every unit that witnessed it has since been deleted.
 
-#### Kind: `relink_unit`
+Bank-deduped at submit time, so concurrent triggers against the same bank coalesce into one drain.
 
-Tops up a memory unit's outgoing temporal/semantic links after one of its top-K neighbours is deleted.
-
-**Why:** the retain pipeline picks each new unit's top neighbours from a capped probe (20 temporal, 50 semantic). When one of those neighbours is later deleted, the FK cascade removes the link but nothing re-evaluates whether a different neighbour (originally just past the cut-off) should take its place — so surviving units sit permanently under-capped, which degrades graph-expansion recall.
-
-**Triggers:** any delete that removes memory_units — `DELETE /documents/{id}`, `DELETE /memories/{id}`, and re-retaining an existing `document_id` (the upsert path). A full bank wipe (`delete_bank`) is a no-op: there are no surviving units to top up.
+**Triggers:** any delete that removes memory_units — `DELETE /documents/{id}`, `DELETE /memories/{id}`, and re-retaining an existing `document_id` (the upsert path). A full bank wipe (`delete_bank`) is a no-op: there's nothing left in the bank to maintain.
 
 ### `webhook_delivery`
 

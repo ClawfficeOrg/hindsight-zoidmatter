@@ -4187,7 +4187,6 @@ class MemoryEngine(MemoryEngineInterface):
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         backend = await self._get_backend()
         invalidated_obs = 0
-        victims_enqueued = 0
         async with acquire_with_retry(backend) as conn:
             async with conn.transaction():
                 # Get memory unit IDs before deletion (for observation cleanup)
@@ -4205,7 +4204,7 @@ class MemoryEngine(MemoryEngineInterface):
                 if unit_ids:
                     from .graph_maintenance import enqueue_relink_victims
 
-                    victims_enqueued = await enqueue_relink_victims(conn, bank_id, unit_ids, ops=backend.ops)
+                    await enqueue_relink_victims(conn, bank_id, unit_ids, ops=backend.ops)
 
                 # Delete document first (cascades to memory_units and all their links).
                 # Running the stale-observation sweep AFTER the delete ensures we also
@@ -4235,7 +4234,10 @@ class MemoryEngine(MemoryEngineInterface):
                 except Exception as e:
                     logger.warning(f"Failed to submit consolidation after document deletion for bank {bank_id}: {e}")
 
-        if victims_enqueued > 0:
+        # Run graph_maintenance whenever any unit was removed — even if no
+        # relink victims were enqueued, the deleted unit's entities may now
+        # be orphans that the bank-wide sweep should clean up.
+        if unit_ids:
             try:
                 await self.submit_async_graph_maintenance(bank_id=bank_id, request_context=request_context)
             except Exception as e:
@@ -4451,9 +4453,7 @@ class MemoryEngine(MemoryEngineInterface):
                 if bank_id and fact_type in ("experience", "world"):
                     from .graph_maintenance import enqueue_relink_victims
 
-                    victims_enqueued = await enqueue_relink_victims(conn, bank_id, [unit_id], ops=backend.ops)
-                    if victims_enqueued > 0:
-                        bank_id_for_graph_maintenance = bank_id
+                    await enqueue_relink_victims(conn, bank_id, [unit_id], ops=backend.ops)
 
                 # Delete the memory unit first (cascades to links and associations).
                 # The stale-observation sweep runs AFTER the delete so it also catches
@@ -4469,6 +4469,12 @@ class MemoryEngine(MemoryEngineInterface):
                     invalidated_obs = await self._delete_stale_observations_for_memories(conn, bank_id, [unit_id])
                     if invalidated_obs > 0:
                         bank_id_for_consolidation = bank_id
+
+                # Run graph_maintenance whenever a source-memory unit was
+                # removed — even if no relink victims were enqueued, the
+                # deleted unit's entities may now be orphans.
+                if deleted and bank_id and fact_type in ("experience", "world"):
+                    bank_id_for_graph_maintenance = bank_id
 
                 result = {
                     "success": deleted is not None,

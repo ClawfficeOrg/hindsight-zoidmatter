@@ -220,10 +220,9 @@ class OracleOps(DataAccessOps):
         conn: DatabaseConnection,
         table: str,
         bank_id: str,
-        kind: str,
-        target_ids: list,
+        unit_ids: list,
     ) -> None:
-        if not target_ids:
+        if not unit_ids:
             return
         # Oracle doesn't support ON CONFLICT; rely on the PK and the
         # IGNORE_ROW_ON_DUPKEY_INDEX hint to skip duplicates server-side.
@@ -231,10 +230,10 @@ class OracleOps(DataAccessOps):
         await conn.executemany(
             f"""
             INSERT /*+ IGNORE_ROW_ON_DUPKEY_INDEX({table}, pk_graph_maintenance_queue) */
-            INTO {table} (bank_id, kind, target_id)
-            VALUES ($1, $2, $3)
+            INTO {table} (bank_id, unit_id)
+            VALUES ($1, $2)
             """,
-            [(bank_id, kind, tid) for tid in target_ids],
+            [(bank_id, uid) for uid in unit_ids],
         )
 
     async def claim_graph_maintenance_batch(
@@ -243,13 +242,13 @@ class OracleOps(DataAccessOps):
         table: str,
         bank_id: str,
         limit: int,
-    ) -> list[tuple[str, str]]:
+    ) -> list[str]:
         # Two-step claim: select the batch, then delete by exact keys. Oracle's
         # DELETE ... RETURNING doesn't accept a multi-row subquery, so we can't
         # do it in one statement like the PG version.
         rows = await conn.fetch(
             f"""
-            SELECT kind, target_id FROM {table}
+            SELECT unit_id FROM {table}
             WHERE bank_id = $1
             ORDER BY enqueued_at
             FETCH FIRST $2 ROWS ONLY
@@ -257,13 +256,55 @@ class OracleOps(DataAccessOps):
             bank_id,
             limit,
         )
-        claimed = [(row["kind"], str(row["target_id"])) for row in rows]
+        claimed = [str(row["unit_id"]) for row in rows]
         if claimed:
             await conn.executemany(
-                f"DELETE FROM {table} WHERE bank_id = $1 AND kind = $2 AND target_id = $3",
-                [(bank_id, kind, tid) for (kind, tid) in claimed],
+                f"DELETE FROM {table} WHERE bank_id = $1 AND unit_id = $2",
+                [(bank_id, uid) for uid in claimed],
             )
         return claimed
+
+    async def prune_orphan_entities(
+        self,
+        conn: DatabaseConnection,
+        entities_table: str,
+        ue_table: str,
+        bank_id: str,
+    ) -> int:
+        # Oracle doesn't return a rowcount on DELETE the same way as asyncpg.
+        # Use SQL%ROWCOUNT via an anonymous block, or count up-front. Counting
+        # up-front keeps the read shape symmetric with PG.
+        deleted = await conn.execute(
+            f"""
+            DELETE FROM {entities_table}
+            WHERE bank_id = $1
+              AND id NOT IN (SELECT DISTINCT entity_id FROM {ue_table})
+            """,
+            bank_id,
+        )
+        return int(deleted.split()[-1]) if isinstance(deleted, str) and deleted.startswith("DELETE") else 0
+
+    async def prune_stale_cooccurrences(
+        self,
+        conn: DatabaseConnection,
+        ec_table: str,
+        ue_table: str,
+        entities_table: str,
+        bank_id: str,
+    ) -> int:
+        deleted = await conn.execute(
+            f"""
+            DELETE FROM {ec_table}
+            WHERE entity_id_1 IN (SELECT id FROM {entities_table} WHERE bank_id = $1)
+              AND (entity_id_1, entity_id_2) NOT IN (
+                  SELECT u1.entity_id, u2.entity_id
+                  FROM {ue_table} u1
+                  JOIN {ue_table} u2 ON u1.unit_id = u2.unit_id
+              )
+            """,
+            bank_id,
+        )
+        return int(deleted.split()[-1]) if isinstance(deleted, str) and deleted.startswith("DELETE") else 0
 
     async def fetch_unit_dates(
         self,
