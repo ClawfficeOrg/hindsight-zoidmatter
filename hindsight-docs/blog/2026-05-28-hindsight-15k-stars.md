@@ -1,6 +1,6 @@
 ---
 title: "Hindsight Hits 15,000 Stars: What's Shipped Since 10k"
-description: "Five weeks after the 10k milestone, Hindsight is at 15k GitHub stars. Here's what shipped: 7 versions, 6 new integrations, the Constellation graph, multilingual Cloud, and more."
+description: "Five weeks after the 10k milestone, Hindsight is at 15k GitHub stars. Here's what shipped in the open-source repo: 7 versions, 6 new integrations, and the Constellation graph view."
 slug: "2026/05/28/hindsight-15k-stars"
 date: 2026-05-28T12:00
 image: "/img/blog/hindsight-15k-stars.png"
@@ -14,7 +14,7 @@ Five weeks ago, [Hindsight crossed 10,000 GitHub stars](/blog/2026/04/22/hindsig
 
 That's +5,000 stars and +247 forks in roughly five weeks. The acceleration is the part worth noting — it means new people are finding Hindsight every day, and a steady share of them are sticking around long enough to fork, contribute, or file thoughtful bugs.
 
-We didn't want to write a second "thanks for the stars" post. So instead, here's the short version of what actually shipped between 10k and 15k.
+We didn't want to write a second "thanks for the stars" post. So instead, here's the short version of what actually shipped in the open-source repo between 10k and 15k.
 
 <!-- truncate -->
 
@@ -40,13 +40,9 @@ We didn't want to write a second "thanks for the stars" post. So instead, here's
 
 That brings the official integration count to 27. Three more (Vercel AI SDK, AG2, Gemini Spark) are in flight.
 
-## Cloud Went Global
+## The Constellation Graph View
 
-The Hindsight Cloud control plane became fully internationalized — eight locales (English, Spanish, French, German, Portuguese, Japanese, Korean, Simplified Chinese), with the docs site in 简体中文. [Alipay landed at checkout](/blog/2026/05/19/cloud-may-updates) for customers in mainland China. The first wave of users from non-English regions arrived almost immediately.
-
-## The Constellation Graph
-
-The [Constellation view](/blog/2026/04/16/constellation-view) shipped just before the 10k milestone but earned most of its usage in this window. Same engine now powers the Entities → Relations tab. If you haven't seen your bank as a graph yet, it's worth ten seconds in the control plane.
+The [Constellation view](/blog/2026/04/16/constellation-view) — an interactive graph of your memories and the entities connecting them — shipped just before the 10k milestone but earned most of its usage in this window. The same engine now powers the Entities → Relations tab. Ships with the open-source control plane, runs against any self-hosted instance.
 
 ## A Few Posts Worth Re-Reading
 
@@ -64,4 +60,4 @@ The 0.7 line still has a few releases left. Self-hosted users should watch for t
 
 Thanks for getting us here. If you starred along the way, you're part of why.
 
-[Sign up for Hindsight Cloud](https://ui.hindsight.vectorize.io/signup), or [self-host with a single Docker command](https://hindsight.vectorize.io/developer/installation).
+[Star Hindsight on GitHub](https://github.com/vectorize-io/hindsight) or [self-host with a single Docker command](https://hindsight.vectorize.io/developer/installation).
