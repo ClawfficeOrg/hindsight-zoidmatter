@@ -28,9 +28,10 @@ session reuse across subsequent sync calls.
 This module keeps **one loop per thread**, created explicitly (so no
 ``get_event_loop`` deprecation) and set as the thread's current loop (so the
 client's own internal ``get_event_loop()`` reuses it instead of spawning yet
-another). The loop is reused across calls — keeping cached sessions valid — and
-closed via :func:`close_loop`, which :func:`hindsight_litellm.cleanup` calls on
-shutdown.
+another). The loop is reused across calls — keeping cached sessions valid — for
+the lifetime of the thread. :func:`close_loop` can tear it down explicitly, but
+it is deliberately NOT called by ``cleanup()`` (see its docstring): closing a
+shared loop out from under a still-live client raises "Event loop is closed".
 """
 
 from __future__ import annotations

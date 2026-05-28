@@ -721,8 +721,8 @@ def enable() -> None:
             raise RuntimeError("Hindsight bank_id not set. Call set_defaults(bank_id=...) before enable().")
 
         # Own this thread's event loop now, before the first patched
-        # completion drives the client. This keeps the client's internal
-        # get_event_loop() on a loop we manage and close in cleanup().
+        # completion drives the client, so the client's internal
+        # get_event_loop() reuses our managed loop instead of auto-creating one.
         ensure_loop()
 
         # Guard against the double-injection footgun: if any HindsightCallback

@@ -109,6 +109,26 @@ def setup_and_teardown(request, bank_id, client):
         pass
 
 
+def _recall_until_contains(query, needles, *, attempts=12, delay=1.0):
+    """Poll recall() until any needle appears in the results, or timeout.
+
+    retain → recall needs a moment for fact extraction + indexing; a single
+    fixed sleep makes the assertion flaky, so poll instead of sleeping once.
+    Returns the (lowercased) joined result text — empty/no-match on timeout, so
+    the caller's assertion still fails with useful context.
+    """
+    from hindsight_litellm import recall
+
+    joined = ""
+    for _ in range(attempts):
+        results = recall(query)
+        joined = " ".join(r.text.lower() for r in results)
+        if any(n in joined for n in needles):
+            return joined
+        time.sleep(delay)
+    return joined
+
+
 # ── Direct Memory APIs ────────────────────────────────────────────
 
 
@@ -347,7 +367,6 @@ class TestContextManager:
             configure,
             hindsight_memory,
             is_enabled,
-            recall,
             set_defaults,
         )
 
@@ -363,12 +382,12 @@ class TestContextManager:
             )
 
         assert not is_enabled(), "Should be disabled after context exit"
-        time.sleep(RETAIN_SLEEP)
 
         configure(hindsight_api_url=HINDSIGHT_API_URL)
         set_defaults(bank_id=bank_id)
-        results = recall("programming language preference")
-        texts = " ".join(r.text.lower() for r in results)
+        texts = _recall_until_contains(
+            "programming language preference", ["typescript", "javascript"]
+        )
         assert "typescript" in texts or "javascript" in texts, f"Expected stored fact, got: {texts}"
 
     def test_context_manager_with_session_id(self, bank_id):

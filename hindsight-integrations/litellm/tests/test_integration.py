@@ -1818,3 +1818,54 @@ class TestWrapperClose:
         fake_hs.close.assert_called_once()
         mock_client.close.assert_called_once()
         assert wrapped._hindsight_client is None
+
+
+class TestWrapBankSetupOwnsLoop:
+    """wrap_*() bank/mission setup must own the thread loop before creating a client."""
+
+    def test_wrap_openai_mission_calls_ensure_loop(self):
+        from unittest.mock import Mock, patch
+
+        from hindsight_litellm.wrappers import wrap_openai
+
+        with (
+            patch("hindsight_litellm.wrappers.ensure_loop") as mock_ensure,
+            patch("hindsight_client.Hindsight") as mock_hs,
+        ):
+            wrap_openai(
+                Mock(),
+                hindsight_api_url="http://localhost:8888",
+                bank_id="b",
+                mission="learn the user's stack",
+                bank_name="My Bank",
+            )
+        mock_ensure.assert_called()
+        mock_hs.return_value.create_bank.assert_called_once()
+
+    def test_wrap_anthropic_mission_calls_ensure_loop(self):
+        from unittest.mock import Mock, patch
+
+        from hindsight_litellm.wrappers import wrap_anthropic
+
+        with (
+            patch("hindsight_litellm.wrappers.ensure_loop") as mock_ensure,
+            patch("hindsight_client.Hindsight") as mock_hs,
+        ):
+            wrap_anthropic(
+                Mock(),
+                hindsight_api_url="http://localhost:8888",
+                bank_id="b",
+                mission="learn the user's stack",
+                bank_name="My Bank",
+            )
+        mock_ensure.assert_called()
+        mock_hs.return_value.create_bank.assert_called_once()
+
+    def test_wrap_openai_without_mission_skips_bank_setup(self):
+        from unittest.mock import Mock, patch
+
+        from hindsight_litellm.wrappers import wrap_openai
+
+        with patch("hindsight_client.Hindsight") as mock_hs:
+            wrap_openai(Mock(), hindsight_api_url="http://localhost:8888", bank_id="b")
+        mock_hs.assert_not_called()

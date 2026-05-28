@@ -46,7 +46,7 @@ def _get_client(api_url: str, api_key: Optional[str] = None):
 
     # Establish this thread's owned event loop before the client's first call so
     # the client's internal get_event_loop() reuses it (no deprecation, no
-    # orphaned loop) and cleanup() can close it later.
+    # orphaned per-call loop).
     ensure_loop()
     return Hindsight(base_url=api_url, api_key=api_key, timeout=30.0, user_agent=USER_AGENT)
 
@@ -938,7 +938,7 @@ class HindsightOpenAI:
             from hindsight_client import Hindsight
 
             # Own this thread's loop before the client's first call so its
-            # cached session binds to a loop cleanup() can later close.
+            # cached session binds to our managed, reused loop.
             ensure_loop()
             self._hindsight_client = Hindsight(
                 base_url=self._api_url,
@@ -1368,7 +1368,7 @@ class HindsightAnthropic:
             from hindsight_client import Hindsight
 
             # Own this thread's loop before the client's first call so its
-            # cached session binds to a loop cleanup() can later close.
+            # cached session binds to our managed, reused loop.
             ensure_loop()
             self._hindsight_client = Hindsight(
                 base_url=self._api_url,
@@ -1768,6 +1768,9 @@ def wrap_openai(
         try:
             from hindsight_client import Hindsight
 
+            # Reuse this thread's managed loop for the bank-setup call too, so
+            # it doesn't auto-create an orphaned loop / trip the deprecation.
+            ensure_loop()
             hs_client = Hindsight(base_url=resolved_api_url, api_key=resolved_api_key, user_agent=USER_AGENT)
             hs_client.create_bank(
                 bank_id=settings_kwargs["bank_id"],
@@ -1870,6 +1873,9 @@ def wrap_anthropic(
         try:
             from hindsight_client import Hindsight
 
+            # Reuse this thread's managed loop for the bank-setup call too, so
+            # it doesn't auto-create an orphaned loop / trip the deprecation.
+            ensure_loop()
             hs_client = Hindsight(base_url=resolved_api_url, api_key=resolved_api_key, user_agent=USER_AGENT)
             hs_client.create_bank(
                 bank_id=settings_kwargs["bank_id"],
