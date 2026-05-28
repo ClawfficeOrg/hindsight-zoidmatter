@@ -46,6 +46,7 @@ def _hindsight_enable_active() -> bool:
     except Exception:
         return False
 
+
 # Use requests for sync HTTP calls to avoid async event loop issues
 try:
     import requests

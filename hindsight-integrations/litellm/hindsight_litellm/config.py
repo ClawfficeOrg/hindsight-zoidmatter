@@ -590,9 +590,7 @@ def set_bank_mission(
             "set_bank_mission requires bank_id (either as an argument or via configure(...)/set_defaults(bank_id=...))."
         )
 
-    resolved_url = hindsight_api_url or (
-        config.hindsight_api_url if config else DEFAULT_HINDSIGHT_API_URL
-    )
+    resolved_url = hindsight_api_url or (config.hindsight_api_url if config else DEFAULT_HINDSIGHT_API_URL)
     resolved_key = api_key or (config.api_key if config else None) or os.getenv("HINDSIGHT_API_KEY")
 
     try:

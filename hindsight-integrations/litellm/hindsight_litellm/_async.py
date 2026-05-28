@@ -80,9 +80,7 @@ def run_sync(coro: Coroutine[Any, Any, _T]) -> _T:
     """
     loop = ensure_loop()
     if loop is None:
-        raise RuntimeError(
-            "run_sync() called from within a running event loop; use the async API instead."
-        )
+        raise RuntimeError("run_sync() called from within a running event loop; use the async API instead.")
     return loop.run_until_complete(coro)
 
 

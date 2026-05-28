@@ -730,8 +730,7 @@ def enable() -> None:
         # through both the monkeypatch AND the callback, injecting memories
         # twice.  Warn loudly so the user fixes their setup.
         try:
-            registered = [cb for cb in (getattr(litellm, "callbacks", []) or [])
-                          if isinstance(cb, HindsightCallback)]
+            registered = [cb for cb in (getattr(litellm, "callbacks", []) or []) if isinstance(cb, HindsightCallback)]
             if registered:
                 import warnings as _warnings
 
