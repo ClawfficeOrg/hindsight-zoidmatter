@@ -17,7 +17,7 @@ Commands:
   :quit / :q                Exit
 
 Example:
-  vapi> :end User: My name is Alex. Assistant: Hi Alex!  User: I prefer email over phone.  Assistant: Got it.
+  vapi> :end User: My name is Alex. Assistant: Hi Alex!  User: I prefer email.  Assistant: Got it.
   vapi> :memories
   vapi> :call +15551234567
 """
@@ -34,7 +34,6 @@ import urllib.request
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from hindsight_vapi import HindsightVapiWebhook
-
 
 BLUE = "\033[94m"
 GREEN = "\033[92m"
@@ -88,7 +87,9 @@ def make_end_of_call(transcript: str) -> dict:
     }
 
 
-async def cmd_end_call(webhook: HindsightVapiWebhook, transcript: str, wait_seconds: int = 8) -> None:
+async def cmd_end_call(
+    webhook: HindsightVapiWebhook, transcript: str, wait_seconds: int = 8
+) -> None:
     banner("WEBHOOK: end-of-call-report", CYAN)
     print(f"transcript length: {len(transcript)} chars")
     event = make_end_of_call(transcript)
@@ -127,7 +128,9 @@ async def cmd_assistant_request(webhook: HindsightVapiWebhook, caller: str | Non
         print(content[:500] + ("..." if len(content) > 500 else ""))
 
 
-async def cmd_script(webhook: HindsightVapiWebhook, url: str, bank: str, api_key: str | None) -> None:
+async def cmd_script(
+    webhook: HindsightVapiWebhook, url: str, bank: str, api_key: str | None
+) -> None:
     """Run a scripted demo that proves the full retain → recall cycle."""
     print(f"\n{GREEN}=== Scripted demo: Alex's first + second call ==={RESET}\n")
 
@@ -157,7 +160,9 @@ async def cmd_script(webhook: HindsightVapiWebhook, url: str, bank: str, api_key
 async def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--bank", default=f"vapi-demo-{os.environ.get('USER', 'anon')}")
-    parser.add_argument("--hindsight-url", default=os.environ.get("HINDSIGHT_API_URL", "http://localhost:8888"))
+    parser.add_argument(
+        "--hindsight-url", default=os.environ.get("HINDSIGHT_API_URL", "http://localhost:8888")
+    )
     parser.add_argument("--hindsight-api-key", default=os.environ.get("HINDSIGHT_API_KEY"))
     args = parser.parse_args()
 
@@ -170,7 +175,8 @@ async def main() -> None:
     print(f"\n{GREEN}=== Vapi + Hindsight Interactive Webhook Simulator ==={RESET}")
     print(f"Bank:      {args.bank}")
     print(f"Hindsight: {args.hindsight_url}")
-    print(f"\nCommands: {DIM}:call <number>  :end <transcript>  :script  :memories  :bank  :quit{RESET}\n")
+    cmds = ":call <number>  :end <transcript>  :script  :memories  :bank  :quit"
+    print(f"\nCommands: {DIM}{cmds}{RESET}\n")
 
     while True:
         try:
