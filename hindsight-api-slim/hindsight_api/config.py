@@ -702,7 +702,8 @@ DEFAULT_CONSOLIDATION_MAX_MEMORIES_PER_ROUND = (
 )
 DEFAULT_CONSOLIDATION_LLM_BATCH_SIZE = 8  # Facts per LLM call (1 = no batching; >1 = batch mode)
 DEFAULT_CONSOLIDATION_LLM_PARALLELISM = (
-    1  # Tag groups consolidated concurrently within one op (1 = sequential, default)
+    4  # Max tag groups consolidated concurrently per op. Locks on overlapping write
+    # scopes degrade to sequential automatically; matches retain_max_concurrent.
 )
 DEFAULT_CONSOLIDATION_MAX_TOKENS = 512  # Max tokens for recall when finding related observations
 DEFAULT_CONSOLIDATION_RECALL_BUDGET = "low"  # Budget level for consolidation recall (low/mid/high)

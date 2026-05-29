@@ -303,6 +303,25 @@ class ConsolidationPerfLog:
         self.total_obs_in_context += obs_count
         self.total_prompt_chars += prompt_chars
 
+    def merge_from(self, other: "ConsolidationPerfLog") -> None:
+        """Merge a per-batch perf log into this (job-level) one.
+
+        Used by the parallel dispatcher: each in-flight batch records into its
+        own ``ConsolidationPerfLog`` so the per-batch log line shows only that
+        batch's timings (no cross-batch interleaving). After the batch finishes
+        we fold the local counters into the job-level perf, which then drives
+        the final ``flush()`` summary.
+
+        ``lines`` is intentionally NOT merged — log lines are emitted directly
+        in ``logger.info`` calls by the dispatcher; the perf object's ``lines``
+        buffer is only used by the top-level job summary.
+        """
+        for key, value in other.timings.items():
+            self.timings[key] = self.timings.get(key, 0.0) + value
+        self.llm_calls += other.llm_calls
+        self.total_obs_in_context += other.total_obs_in_context
+        self.total_prompt_chars += other.total_prompt_chars
+
     def flush(self) -> None:
         """Flush all log lines to the logger."""
         total_time = time.time() - self.start_time
@@ -427,6 +446,10 @@ async def run_consolidation_job(
     hit_round_limit = False
 
     llm_batch_num = 0
+    # Cumulative count of memories processed across the whole job, shared by
+    # the per-batch log so it can still report processed/total under parallelism.
+    # Mutable container so the inner closure can update without a `nonlocal`.
+    cumulative_progress = {"processed": 0}
     while True:
         # Cap fetch size by remaining round budget
         fetch_limit = (
@@ -487,11 +510,17 @@ async def run_consolidation_job(
             group_scopes.append(sorted(scopes, key=_scope_sort_key))
 
         async def _process_one_llm_batch(llm_batch_local: list[dict[str, Any]], batch_num_local: int) -> _BatchDeltas:
-            """Process one LLM batch independently. Returns local deltas + cancelled flag."""
+            """Process one LLM batch independently. Returns local deltas + cancelled flag.
+
+            Each batch records timings/llm-call counters into its OWN
+            ``ConsolidationPerfLog`` so the per-batch log line reflects only
+            this batch's work — not interleaved timings from concurrent batches
+            sharing the global ``perf``. The local perf is merged into the
+            job-level ``perf`` once at the end so the final summary still totals
+            everything.
+            """
             llm_batch_start = time.time()
-            snap_timings = perf.timings.copy()
-            snap_llm_calls = perf.llm_calls
-            snap_total_chars = perf.total_prompt_chars
+            batch_perf = ConsolidationPerfLog(bank_id)
 
             local_tags: set[str] = set()
             for memory in llm_batch_local:
@@ -526,7 +555,7 @@ async def run_consolidation_job(
                                 bank_id=bank_id,
                                 memories=sub_batch,
                                 request_context=request_context,
-                                perf=perf,
+                                perf=batch_perf,
                                 config=config,
                                 obs_tags_override=obs_tags,
                             )
@@ -563,7 +592,7 @@ async def run_consolidation_job(
                             bank_id=bank_id,
                             memories=sub_batch,
                             request_context=request_context,
-                            perf=perf,
+                            perf=batch_perf,
                             config=config,
                         )
 
@@ -640,23 +669,31 @@ async def run_consolidation_job(
                 elif action == "failed":
                     local_stats["memories_failed"] += 1
 
-            # Under parallelism, perf timings/llm_calls are shared across in-flight
-            # batches, so the per-key deltas here can include other batches'
-            # activity. "batch=" is the batch-local processed count (cumulative is
-            # only meaningful after gather completes). Run with parallelism=1 for
-            # fully-isolated per-batch timing.
+            # Maintain the cumulative-progress indicator under parallelism:
+            # increment a shared counter and snapshot under the same statement
+            # so the snapshot includes this batch. No await between the read
+            # and write, so single-threaded asyncio gives us atomicity for free
+            # — no lock needed.
+            cumulative_progress["processed"] += local_stats["memories_processed"]
+            cum_processed = cumulative_progress["processed"]
+
+            # Per-batch log uses batch_perf so timings/llm-calls/tokens reflect
+            # only this batch's own work, even when other batches are running
+            # concurrently under parallelism > 1. ``processed=`` is the
+            # cumulative count across all batches that have finished so far in
+            # this job (monotonic, may be reported out of strict batch-number
+            # order under parallelism).
             llm_batch_time = time.time() - llm_batch_start
-            timing_parts = []
-            for key in ["recall", "llm", "embedding", "db_write"]:
-                if key in perf.timings:
-                    delta = perf.timings[key] - snap_timings.get(key, 0)
-                    timing_parts.append(f"{key}={delta:.3f}s")
-            input_tokens = int((perf.total_prompt_chars - snap_total_chars) / 4)
-            llm_calls_made = perf.llm_calls - snap_llm_calls
+            timing_parts = [
+                f"{key}={batch_perf.timings[key]:.3f}s"
+                for key in ("recall", "llm", "embedding", "db_write")
+                if key in batch_perf.timings
+            ]
+            input_tokens = int(batch_perf.total_prompt_chars / 4)
             logger.info(
                 f"[CONSOLIDATION] bank={bank_id} llm_batch #{batch_num_local}"
-                f" ({len(llm_batch_local)} memories, {llm_calls_made} llm calls)"
-                f" | batch={local_stats['memories_processed']} (of {total_count})"
+                f" ({len(llm_batch_local)} memories, {batch_perf.llm_calls} llm calls)"
+                f" | processed={cum_processed}/{total_count}"
                 f" | {', '.join(timing_parts)}"
                 f" | created={local_stats['observations_created']}"
                 f" updated={local_stats['observations_updated']}"
@@ -665,6 +702,13 @@ async def run_consolidation_job(
                 + f" | input_tokens=~{input_tokens}"
                 f" | avg={llm_batch_time / max(1, len(llm_batch_local)):.3f}s/memory"
             )
+
+            # Fold batch counters into the job-level perf so the final summary
+            # (perf.flush) totals every batch correctly. Safe without a lock —
+            # ConsolidationPerfLog.merge_from is a series of += on Python ints
+            # and floats with no intervening awaits, so single-threaded asyncio
+            # gives us atomicity.
+            perf.merge_from(batch_perf)
 
             return _BatchDeltas(stats=local_stats, tags=local_tags, cancelled=cancelled_local)
 

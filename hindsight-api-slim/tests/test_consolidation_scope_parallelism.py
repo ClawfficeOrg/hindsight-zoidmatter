@@ -388,6 +388,90 @@ async def test_overlapping_scopes_serialise_under_parallelism(memory: MemoryEngi
 
 
 @pytest.mark.asyncio
+async def test_per_batch_log_line_attributes_only_own_work(memory: MemoryEngine, request_context, caplog):
+    """Per-batch log timings / llm_calls / tokens / processed must reflect only
+    that batch's own work — not totals leaking in from other in-flight batches
+    under parallelism. Pins the per-batch perf isolation that ``batch_perf``
+    + ``perf.merge_from`` provide.
+
+    Setup: 3 disjoint memories under combined mode at parallelism=3 so all
+    three batches run concurrently. The mock LLM is deterministic (1 obs per
+    fact, 1 LLM call per batch). After the job we parse each emitted log line
+    and assert per-batch attributes against that single batch's known work,
+    plus check the cumulative ``processed=N/total`` field is monotonic.
+    """
+    import logging
+
+    bank_id = f"test-perbatch-log-{uuid.uuid4().hex[:8]}"
+    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    try:
+        async with memory._pool.acquire() as conn:
+            await _insert_memory(conn, bank_id, "Alice fact", ["alice"], None)
+            await _insert_memory(conn, bank_id, "Bob fact", ["bob"], None)
+            await _insert_memory(conn, bank_id, "Carol fact", ["carol"], None)
+
+        wrapper, _ = _mock_llm_one_obs_per_fact()
+        original_llm = memory._consolidation_llm_config
+        memory._consolidation_llm_config = wrapper
+        try:
+            with (
+                _override_config(memory, consolidation_llm_parallelism=3, consolidation_llm_batch_size=1),
+                patch.object(memory, "submit_async_consolidation"),
+                caplog.at_level(logging.INFO, logger="hindsight_api.engine.consolidation.consolidator"),
+            ):
+                await run_consolidation_job(
+                    memory_engine=memory, bank_id=bank_id, request_context=request_context
+                )
+        finally:
+            memory._consolidation_llm_config = original_llm
+
+        # Parse the per-batch log lines.
+        per_batch = [r.message for r in caplog.records if "llm_batch #" in r.message]
+        assert len(per_batch) == 3, f"expected 3 per-batch log lines, got {len(per_batch)}:\n{per_batch}"
+
+        # Every batch processed exactly one memory (llm_batch_size=1) and made
+        # exactly one LLM call. If a stale-snapshot bug let counters from
+        # other batches leak in, ``llm calls`` would be > 1 for some batches.
+        processed_values: list[int] = []
+        for line in per_batch:
+            m_calls = re.search(r"(\d+) llm calls", line)
+            assert m_calls and int(m_calls.group(1)) == 1, f"expected 1 llm call per batch, got: {line}"
+            m_mems = re.search(r"\((\d+) memories,", line)
+            assert m_mems and int(m_mems.group(1)) == 1, f"expected 1 memory per batch, got: {line}"
+            # Per-batch created count must be 1 (mock LLM creates one obs per fact).
+            m_created = re.search(r"created=(\d+)", line)
+            assert m_created and int(m_created.group(1)) == 1, f"expected created=1, got: {line}"
+            # processed=N/3 — cumulative; collect for monotonicity check.
+            m_proc = re.search(r"processed=(\d+)/3", line)
+            assert m_proc, f"expected processed=N/3 cumulative indicator, got: {line}"
+            processed_values.append(int(m_proc.group(1)))
+
+        # Cumulative counter must be monotonically increasing and end at 3.
+        assert processed_values == sorted(processed_values), (
+            f"processed counter must be monotonic, got {processed_values}"
+        )
+        assert max(processed_values) == 3, (
+            f"final cumulative processed should be 3, got {max(processed_values)}"
+        )
+        assert set(processed_values) == {1, 2, 3}, (
+            f"each batch should bump the counter by exactly 1, got {processed_values}"
+        )
+
+        # Per-batch llm timing must be > 0 (every batch made an LLM call) and
+        # finite (not bleeding from concurrent batches into an inflated delta).
+        for line in per_batch:
+            m_llm_time = re.search(r"llm=(\d+\.\d+)s", line)
+            assert m_llm_time, f"expected llm=Xs timing, got: {line}"
+            # Sanity: a single mock-LLM call is fast — under a second easily.
+            # If snapshot leaked, this would catch concurrent batches' LLM time too.
+            assert float(m_llm_time.group(1)) < 5.0, (
+                f"llm timing implausibly large for a single mock-LLM call: {line}"
+            )
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
 async def test_disjoint_scopes_run_concurrently(memory: MemoryEngine, request_context):
     """When write-scope sets are pairwise disjoint, the dispatcher must let
     groups run in parallel — we should observe simultaneous in-flight recalls
