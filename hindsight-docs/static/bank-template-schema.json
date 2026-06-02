@@ -420,6 +420,71 @@
           "default": null,
           "description": "Ceiling for the adaptive function (after clamping)",
           "title": "Recall Budget Max"
+        },
+        "memory_type": {
+          "anyOf": [
+            {
+              "enum": [
+                "ArchitecturalInvariant",
+                "ExplicitMentalModel",
+                "HardFact",
+                "EmpiricalObservation",
+                "ConversationalContext"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Zoidmatter memory type classification",
+          "title": "Memory Type"
+        },
+        "base_priority_multiplier": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Multiplier applied to the memory type's default priority weight",
+          "title": "Base Priority Multiplier"
+        },
+        "invariant_scope": {
+          "anyOf": [
+            {
+              "enum": [
+                "project",
+                "session",
+                "global"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Scope for architectural invariants: project, session, or global",
+          "title": "Invariant Scope"
+        },
+        "lod_level": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Level of Detail for code understanding (0 = symbol, 1 = interface, 2 = error path, 3 = implementation)",
+          "title": "LOD Level"
         }
       },
       "title": "BankTemplateConfig",
