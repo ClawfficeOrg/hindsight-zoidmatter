@@ -1,0 +1,25 @@
+[package]
+name = "hindsight-api"
+version = "0.1.0"
+edition = "2021"
+authors = ["Zoidmatter Team"]
+description = "Programmatic API and CLI for ZoidMatter invariant CRUD"
+license = "MIT"
+repository = "https://github.com/anomalyco/ZoidMatter"
+
+[lib]
+name = "hindsight_api"
+path = "src/lib.rs"
+
+[[bin]]
+name = "zoidmatter"
+path = "src/main.rs"
+
+[dependencies]
+hindsight-core = { path = "../hindsight-core" }
+hindsight-missions = { path = "../hindsight-missions" }
+uuid = { version = "1.0", features = ["v4"] }
+clap = { version = "4.0", features = ["derive"] }
+
+[dev-dependencies]
+hindsight-recall = { path = "../hindsight-recall" }

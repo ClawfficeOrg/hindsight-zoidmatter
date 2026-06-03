@@ -1,0 +1,16 @@
+[package]
+name = "hindsight-missions"
+version = "0.1.0"
+edition = "2021"
+authors = ["Zoidmatter Team"]
+description = "Retain and recall missions for the ZoidMatter memory system"
+license = "MIT"
+repository = "https://github.com/anomalyco/ZoidMatter"
+
+[dependencies]
+hindsight-core = { path = "../hindsight-core" }
+serde = { version = "1.0", features = ["derive"] }
+tracing = "0.1"
+
+[dev-dependencies]
+serde_json = "1.0"
