@@ -30,7 +30,7 @@ struct LongMemEvalItem {
     haystack_session_ids: Vec<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 struct StringOrInt(pub String);
 
 impl<'de> serde::Deserialize<'de> for StringOrInt {

@@ -15,6 +15,14 @@ impl InMemoryFactStore {
         }
     }
 
+    pub fn all_items(&self) -> Result<Vec<MemoryItem>, MissionError> {
+        let items = self
+            .items
+            .lock()
+            .map_err(|e| MissionError::Query(format!("lock poisoned: {}", e)))?;
+        Ok(items.clone())
+    }
+
     pub fn clear(&self) -> Result<(), MissionError> {
         let mut items = self
             .items
